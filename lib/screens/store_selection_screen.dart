@@ -1,0 +1,301 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import '../services/api_client.dart';
+import '../services/devices_api_service.dart';
+import '../services/stores_api_service.dart';
+import 'login_screen.dart';
+import '../widgets/sample_a.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+
+class StoreSelectionScreen extends StatefulWidget {
+  final String deviceId;
+  final Future<void> Function(String storeId) onSave;
+
+  const StoreSelectionScreen({
+    super.key,
+    required this.deviceId,
+    required this.onSave,
+  });
+
+  static Future<bool?> show({
+    required BuildContext context,
+    required String deviceId,
+    required Future<void> Function(String storeId) onSave,
+  }) => Navigator.of(context).push<bool>(
+    MaterialPageRoute(
+      builder: (_) => StoreSelectionScreen(deviceId: deviceId, onSave: onSave),
+    ),
+  );
+
+  @override
+  State<StoreSelectionScreen> createState() => _StoreSelectionScreenState();
+}
+
+class _StoreSelectionScreenState extends State<StoreSelectionScreen> {
+  List<Map<String, dynamic>> _stores = [];
+  String? _currentStoreId;
+  String? _selectedStoreId;
+  String _search = '';
+  final TextEditingController _searchCtrl = TextEditingController();
+  Timer? _debounceTimer;
+  bool _loading = true;
+  bool _saving = false;
+  String? _loadError;
+  String? _saveError;
+  bool _needsLogin = false;
+
+  @override
+  void dispose() {
+    _debounceTimer?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 250), () {
+      if (mounted) {
+        setState(() => _search = value.trim().toLowerCase());
+      }
+    });
+  }
+
+  static const _sessionMessage =
+      'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại để đổi cửa hàng.';
+
+  void _openLogin() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
+      (_) => false,
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+      _needsLogin = false;
+    });
+    try {
+      final results = await Future.wait<dynamic>([
+        DevicesApiService().getDeviceById(widget.deviceId),
+        StoresApiService().getStores(),
+      ]);
+      if (!mounted) return;
+      final device = results[0] as Map<String, dynamic>;
+      bool isTestStore(Map s) {
+        final name = (s['name'] ?? '').toString().toUpperCase();
+        final code = (s['code'] ?? s['storeCode'] ?? '').toString().toUpperCase();
+        return name.contains('E2E ') ||
+            name.contains('AUDIT STORE') ||
+            name.contains('TEST STORE') ||
+            code.startsWith('STR_E2E_') ||
+            code.startsWith('STR_WDR_') ||
+            code.startsWith('STR_BV_') ||
+            code.startsWith('STORE-CAT-');
+      }
+
+      int storePriority(Map s) {
+        final id = (s['storeId'] ?? s['id'] ?? '').toString();
+        if (id == '1') return 0;
+        if (id == '2') return 1;
+        if (id == '67') return 2;
+        if (id == '381') return 3;
+        return 10;
+      }
+
+      final stores = (results[1] as List)
+          .whereType<Map>()
+          .where((s) => s['status'] == 'ACTIVE' && !isTestStore(s))
+          .map((s) => Map<String, dynamic>.from(s))
+          .toList()
+        ..sort((a, b) => storePriority(a).compareTo(storePriority(b)));
+      setState(() {
+        _stores = stores;
+        _currentStoreId = device['storeId']?.toString();
+        _selectedStoreId = _currentStoreId;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _needsLogin = error is ApiException && error.statusCode == 401;
+        _loadError = _needsLogin
+            ? _sessionMessage
+            : error is ApiException && error.statusCode == 403
+            ? 'Bạn không có quyền cấu hình nút này.'
+            : error is ApiException && error.statusCode == 404
+            ? 'Không tìm thấy thiết bị. Vui lòng tải lại danh sách nút.'
+            : 'Không thể tải cửa hàng. Vui lòng thử lại.';
+      });
+    }
+  }
+
+  Future<void> _save() async {
+    final storeId = _selectedStoreId;
+    if (_saving || storeId == null || storeId == _currentStoreId) return;
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    try {
+      await widget.onSave(storeId);
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        if (error is ApiException && error.statusCode == 401) {
+          _needsLogin = true;
+          _loadError = _sessionMessage;
+          return;
+        }
+        _saveError = error is ApiException
+            ? error.message
+            : 'Không thể đổi cửa hàng. Vui lòng thử lại.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _stores.where(
+      (s) => '${s['name']} ${s['address'] ?? ''} ${s['code'] ?? ''}'
+          .toLowerCase()
+          .contains(_search),
+    );
+    return PopScope(
+      canPop: !_saving,
+      child: Scaffold(
+        backgroundColor: SampleA.background,
+        appBar: AppBar(
+          backgroundColor: SampleA.background,
+          title: const Text('Đổi cửa hàng', style: SampleA.section),
+        ),
+        body: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Đổi cửa hàng sẽ bỏ sản phẩm đang gán. Bạn cần chọn lại sản phẩm của cửa hàng mới.',
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _searchCtrl,
+                  enabled: !_saving,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchCtrl.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 18),
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              _onSearchChanged('');
+                            },
+                          )
+                        : null,
+                    hintText: 'Tìm cửa hàng, địa chỉ',
+                    border: const OutlineInputBorder(),
+                  ),
+                  onChanged: _onSearchChanged,
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: _loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _loadError != null
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(_loadError!, textAlign: TextAlign.center),
+                              TextButton(
+                                onPressed: _needsLogin ? _openLogin : _load,
+                                child: Text(
+                                  _needsLogin ? 'Đăng nhập lại' : 'Thử lại',
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : filtered.isEmpty
+                      ? const Center(
+                          child: Text('Không tìm thấy cửa hàng đang hoạt động'),
+                        )
+                      : ListView(
+                          children: filtered.map((store) {
+                            final id = store['storeId'].toString();
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(
+                                LucideIcons.store,
+                                color: SampleA.primary,
+                              ),
+                              title: Text(
+                                store['name']?.toString() ?? 'Cửa hàng',
+                              ),
+                              subtitle: Text(
+                                [
+                                  if (id == _currentStoreId)
+                                    'Cửa hàng hiện tại',
+                                  if (store['address'] != null)
+                                    store['address'].toString(),
+                                ].join(' • '),
+                              ),
+                              trailing: Icon(
+                                id == _selectedStoreId
+                                    ? Icons.radio_button_checked
+                                    : Icons.radio_button_off,
+                              ),
+                              onTap: _saving
+                                  ? null
+                                  : () => setState(() {
+                                      _selectedStoreId = id;
+                                      _saveError = null;
+                                    }),
+                            );
+                          }).toList(),
+                        ),
+                ),
+                if (_saveError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      _saveError!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  ),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: SampleA.primary,
+                  ),
+                  onPressed:
+                      _loading ||
+                          _saving ||
+                          _loadError != null ||
+                          _selectedStoreId == null ||
+                          _selectedStoreId == _currentStoreId
+                      ? null
+                      : _save,
+                  child: Text(
+                    _saving ? 'Đang đổi cửa hàng...' : 'Lưu cửa hàng',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
