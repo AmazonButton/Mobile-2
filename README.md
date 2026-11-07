@@ -1,16 +1,17 @@
 # SmartOrder Button Mobile
 
-Flutter mobile client for SmartOrder Button IoT 1-touch ordering platform.
+Cross-platform Flutter app (Android / iOS / Web PWA) for the SmartOrder Button IoT ecosystem.
 
-## Getting Started
+## Core Features
+- Role-based dashboards for Customer, Store Owner, and Admin
+- Goong Maps geocoding and 5km free-delivery estimation
+- PayOS QR payment integration
+- ESP32 BLE GATT pairing (`0000FFF0` / `0000FFF1` / `0000FFF2`)
+
+## Development
 
 ```bash
 flutter pub get
-flutter run
+flutter analyze
+flutter build web --release
 ```
-
-## Planned Modules
-- Authentication & role routing
-- Smart IoT button pairing (BLE)
-- Product catalog and 1-touch order tracking
-- Store owner inventory management
