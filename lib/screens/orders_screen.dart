@@ -360,6 +360,7 @@ class _OrdersScreenState extends State<OrdersScreen>
               Expanded(
                 child: TabBarView(
                   controller: _tabController,
+                  physics: const BouncingScrollPhysics(),
                   children: [
                     RefreshIndicator(
                       color: SampleA.primary,

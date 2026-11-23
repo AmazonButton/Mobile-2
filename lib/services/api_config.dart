@@ -118,6 +118,7 @@ class ApiConfig {
 
   // Stores & Rentals & Wallet endpoints
   static const String stores = '/stores';
+  static const String adminStores = '/admin/stores';
   static const String storeMe = '/stores/me';
   static String storeDetail(String id) => '/stores/$id';
   static const String rentalPackages = '/rentals/packages';

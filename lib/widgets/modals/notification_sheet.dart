@@ -10,17 +10,23 @@ import '../../screens/main_layout.dart';
 
 /// Modern in-app notification center modal bottom sheet.
 class NotificationSheet extends StatelessWidget {
-  const NotificationSheet({super.key});
+  final ValueChanged<int>? onSwitchTab;
+  const NotificationSheet({super.key, this.onSwitchTab});
 
   /// Displays the Notification bottom sheet.
-  static Future<void> show(BuildContext context) {
+  static Future<void> show(
+    BuildContext context, {
+    ValueChanged<int>? onSwitchTab,
+  }) {
     HapticFeedback.lightImpact();
+    final switcher =
+        onSwitchTab ?? ((int index) => MainLayout.switchToTab(context, index));
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.5),
-      builder: (ctx) => const NotificationSheet(),
+      builder: (ctx) => NotificationSheet(onSwitchTab: switcher),
     );
   }
 
@@ -92,13 +98,17 @@ class NotificationSheet extends StatelessWidget {
                           children: [
                             Row(
                               children: [
-                                const Text(
-                                  'Thông báo',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: SampleA.ink,
-                                    letterSpacing: -0.3,
+                                const Flexible(
+                                  child: Text(
+                                    'Thông báo',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: SampleA.ink,
+                                      letterSpacing: -0.3,
+                                    ),
                                   ),
                                 ),
                                 if (unreadCount > 0) ...[
@@ -233,25 +243,26 @@ class NotificationSheet extends StatelessWidget {
                               onTap: () {
                                 HapticFeedback.lightImpact();
                                 notifProvider.markAsRead(item.id);
-                                if (item.type == 'OUT_OF_STOCK' ||
-                                    item.type == 'LOW_STOCK') {
+                                final userProv = context.read<UserProvider?>();
+                                final isSystemStaff =
+                                    userProv?.isSystemStaff ?? false;
+                                final isStoreOwner =
+                                    userProv?.isStoreOwner ?? false;
+                                final isAdmin = userProv?.isAdmin ?? false;
+                                if ((item.type == 'OUT_OF_STOCK' ||
+                                        item.type == 'LOW_STOCK') &&
+                                    isStoreOwner) {
                                   Navigator.of(context).pop();
-                                  MainLayout.switchToTab(context, 1);
+                                  onSwitchTab?.call(1);
                                 } else if (item.orderId != null ||
                                     item.orderCode != null) {
-                                  final userProv = context.read<UserProvider?>();
-                                  final isSystemStaff =
-                                      userProv?.isSystemStaff ?? false;
-                                  final isStoreOwner =
-                                      userProv?.isStoreOwner ?? false;
                                   Navigator.of(context).pop();
-                                  MainLayout.switchToTab(
-                                    context,
+                                  onSwitchTab?.call(
                                     isSystemStaff
                                         ? 1
-                                        : isStoreOwner
-                                            ? 3
-                                            : 2,
+                                        : (isStoreOwner || isAdmin)
+                                        ? 3
+                                        : 2,
                                   );
                                 }
                               },

@@ -2,25 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
+import '../providers/order_provider.dart';
 import '../providers/user_provider.dart';
+import '../widgets/app_motion.dart';
 import '../widgets/smart_order_tour.dart';
-import 'home_screen.dart';
+import 'admin_stores_screen.dart';
 import 'devices_screen.dart';
+import 'home_screen.dart';
 import 'orders_screen.dart';
 import 'profile_screen.dart';
 import 'store_products_screen.dart';
 import 'system_staff/system_staff_devices_screen.dart';
-import 'system_staff/system_staff_warranty_screen.dart';
 import 'system_staff/system_staff_returns_screen.dart';
-import '../widgets/sample_a.dart';
+import 'system_staff/system_staff_warranty_screen.dart';
 
-/// App Shell Architecture with persistent bottom navigation using IndexedStack
+/// Role-segmented App Shell with persistent bottom navigation, smooth tab transitions,
+/// and strict per-role workspace isolation (CUSTOMER / STORE_OWNER / SYSTEM_STAFF / ADMIN).
 class MainLayout extends StatefulWidget {
   final int initialIndex;
 
   const MainLayout({super.key, this.initialIndex = 0});
 
-  /// Allows child widgets to programmatically switch tabs without pushing new routes
+  /// Allows child widgets to programmatically switch tabs without pushing new routes.
   static void switchToTab(BuildContext context, int index) {
     final state = context.findAncestorStateOfType<_MainLayoutState>();
     state?.changeTab(index);
@@ -33,6 +36,7 @@ class MainLayout extends StatefulWidget {
 class _MainLayoutState extends State<MainLayout> {
   late int _currentIndex;
   late final SmartOrderTour _tour;
+  String? _lastRoleKey;
 
   @override
   void dispose() {
@@ -47,12 +51,17 @@ class _MainLayoutState extends State<MainLayout> {
     _tour = SmartOrderTour(context: context, changeTab: changeTab);
   }
 
+  int _tabCountFor(UserProvider? userProv) {
+    if (userProv == null) return 4;
+    if (userProv.isStoreOwner || userProv.isSystemStaff || userProv.isAdmin) {
+      return 5;
+    }
+    return 4;
+  }
+
   void changeTab(int index) {
     final userProv = context.read<UserProvider?>();
-    final maxTabs =
-        (userProv?.isStoreOwner == true || userProv?.isSystemStaff == true)
-            ? 5
-            : 4;
+    final maxTabs = _tabCountFor(userProv);
     if (index >= 0 && index < maxTabs && index != _currentIndex) {
       HapticFeedback.selectionClick();
       setState(() {
@@ -64,10 +73,21 @@ class _MainLayoutState extends State<MainLayout> {
   @override
   Widget build(BuildContext context) {
     final userProv = context.watch<UserProvider?>();
+    final orderProv = context.watch<OrderProvider?>();
     final account = userProv?.accountId;
+    final role = userProv?.role ?? 'CUSTOMER';
     final isAdmin = userProv?.isAdmin ?? false;
     final isSystemStaff = userProv?.isSystemStaff ?? false;
     final isStoreOwner = userProv?.isStoreOwner ?? false;
+
+    final roleKey = '$account:$role';
+    if (_lastRoleKey != null && _lastRoleKey != roleKey && _currentIndex != 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _currentIndex = 0);
+      });
+    }
+    _lastRoleKey = roleKey;
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && !isAdmin && !isStoreOwner && !isSystemStaff) {
         _tour.accountChanged(account);
@@ -84,172 +104,102 @@ class _MainLayoutState extends State<MainLayout> {
             const SystemStaffReturnsScreen(),
             ProfileScreen(showBackButton: false, tour: _tour),
           ]
+        : isAdmin
+        ? [
+            HomePage(tour: _tour),
+            const AdminStoresScreen(),
+            const SystemStaffDevicesScreen(),
+            OrdersScreen(showBackButton: false, tour: _tour),
+            ProfileScreen(showBackButton: false, tour: _tour),
+          ]
         : isStoreOwner
-            ? [
-                HomePage(tour: _tour),
-                const StoreProductsScreen(),
-                DevicesScreen(tour: _tour),
-                OrdersScreen(showBackButton: false, tour: _tour),
-                ProfileScreen(showBackButton: false, tour: _tour),
-              ]
-            : [
-                HomePage(tour: _tour),
-                DevicesScreen(tour: _tour),
-                OrdersScreen(showBackButton: false, tour: _tour),
-                ProfileScreen(showBackButton: false, tour: _tour),
-              ];
+        ? [
+            HomePage(tour: _tour),
+            const StoreProductsScreen(),
+            DevicesScreen(tour: _tour),
+            OrdersScreen(showBackButton: false, tour: _tour),
+            ProfileScreen(showBackButton: false, tour: _tour),
+          ]
+        : [
+            HomePage(tour: _tour),
+            DevicesScreen(tour: _tour),
+            OrdersScreen(showBackButton: false, tour: _tour),
+            ProfileScreen(showBackButton: false, tour: _tour),
+          ];
 
     final safeIndex = _currentIndex.clamp(0, screens.length - 1);
 
-    final destinations = isSystemStaff
+    final navItems = isSystemStaff
         ? const [
-            NavigationDestination(
-              icon: Icon(LucideIcons.layoutDashboard),
-              label: 'Tổng quan',
-              tooltip: '',
-            ),
-            NavigationDestination(
-              icon: Icon(LucideIcons.cpu),
-              label: 'Kho nút',
-              tooltip: '',
-            ),
-            NavigationDestination(
-              icon: Icon(LucideIcons.shieldCheck),
-              label: 'Bảo hành',
-              tooltip: '',
-            ),
-            NavigationDestination(
-              icon: Icon(LucideIcons.rotateCcw),
-              label: 'Thu hồi',
-              tooltip: '',
-            ),
-            NavigationDestination(
-              icon: Icon(LucideIcons.userRound),
-              label: 'Tài khoản',
-              tooltip: '',
-            ),
+            AppNavItem(icon: LucideIcons.layoutDashboard, label: 'Tổng quan'),
+            AppNavItem(icon: LucideIcons.cpu, label: 'Kho nút'),
+            AppNavItem(icon: LucideIcons.shieldCheck, label: 'Bảo hành'),
+            AppNavItem(icon: LucideIcons.rotateCcw, label: 'Thu hồi'),
+            AppNavItem(icon: LucideIcons.userRound, label: 'Tài khoản'),
           ]
         : isAdmin
-            ? const [
-            NavigationDestination(
-              icon: Icon(LucideIcons.layoutDashboard),
-              label: 'Tổng quan',
-              tooltip: '',
-            ),
-            NavigationDestination(
-              icon: Icon(LucideIcons.cpu),
-              label: 'Kho nút',
-              tooltip: '',
-            ),
-            NavigationDestination(
-              icon: Icon(LucideIcons.receiptText),
-              label: 'Đơn hàng',
-              tooltip: '',
-            ),
-            NavigationDestination(
-              icon: Icon(LucideIcons.userRound),
-              label: 'Tài khoản',
-              tooltip: '',
-            ),
+        ? const [
+            AppNavItem(icon: LucideIcons.layoutDashboard, label: 'Tổng quan'),
+            AppNavItem(icon: LucideIcons.store, label: 'Cửa hàng'),
+            AppNavItem(icon: LucideIcons.cpu, label: 'Kho nút'),
+            AppNavItem(icon: LucideIcons.receiptText, label: 'Đơn hàng'),
+            AppNavItem(icon: LucideIcons.userRound, label: 'Tài khoản'),
           ]
         : isStoreOwner
-            ? const [
-                NavigationDestination(
-                  icon: Icon(LucideIcons.store),
-                  label: 'Tổng quan',
-                  tooltip: '',
-                ),
-                NavigationDestination(
-                  icon: Icon(LucideIcons.package),
-                  label: 'Sản phẩm',
-                  tooltip: '',
-                ),
-                NavigationDestination(
-                  icon: Icon(LucideIcons.cpu),
-                  label: 'Nút IoT',
-                  tooltip: '',
-                ),
-                NavigationDestination(
-                  icon: Icon(LucideIcons.receiptText),
-                  label: 'Đơn hàng',
-                  tooltip: '',
-                ),
-                NavigationDestination(
-                  icon: Icon(LucideIcons.userRound),
-                  label: 'Tài khoản',
-                  tooltip: '',
-                ),
-              ]
-            : const [
-                NavigationDestination(
-                  icon: Icon(LucideIcons.home),
-                  label: 'Trang chủ',
-                  tooltip: '',
-                ),
-                NavigationDestination(
-                  icon: Icon(LucideIcons.smartphone),
-                  label: 'Nút của tôi',
-                  tooltip: '',
-                ),
-                NavigationDestination(
-                  icon: Icon(LucideIcons.receiptText),
-                  label: 'Đơn hàng',
-                  tooltip: '',
-                ),
-                NavigationDestination(
-                  icon: Icon(LucideIcons.userRound),
-                  label: 'Tài khoản',
-                  tooltip: '',
-                ),
-              ];
+        ? const [
+            AppNavItem(icon: LucideIcons.store, label: 'Tổng quan'),
+            AppNavItem(icon: LucideIcons.package, label: 'Sản phẩm'),
+            AppNavItem(icon: LucideIcons.cpu, label: 'Nút IoT'),
+            AppNavItem(icon: LucideIcons.receiptText, label: 'Đơn hàng'),
+            AppNavItem(icon: LucideIcons.userRound, label: 'Tài khoản'),
+          ]
+        : const [
+            AppNavItem(icon: LucideIcons.home, label: 'Trang chủ'),
+            AppNavItem(icon: LucideIcons.smartphone, label: 'Nút của tôi'),
+            AppNavItem(icon: LucideIcons.receiptText, label: 'Đơn hàng'),
+            AppNavItem(icon: LucideIcons.userRound, label: 'Tài khoản'),
+          ];
+
+    final accentColor = isAdmin
+        ? const Color(0xFF4338CA)
+        : isSystemStaff
+        ? const Color(0xFF0E7490)
+        : isStoreOwner
+        ? const Color(0xFF047857)
+        : const Color(0xFF0E6BA8);
+
+    final accentSoftColor = isAdmin
+        ? const Color(0xFFEEF2FF)
+        : isSystemStaff
+        ? const Color(0xFFECFEFF)
+        : isStoreOwner
+        ? const Color(0xFFECFDF5)
+        : const Color(0xFFE0F2FE);
+
+    final pendingStoreOrders = isStoreOwner
+        ? (orderProv?.orders
+                  .where((o) => o.rawStatus.toUpperCase() == 'PENDING')
+                  .length ??
+              0)
+        : 0;
 
     return PopScope(
       onPopInvokedWithResult: (_, _) => _tour.dismiss(),
       child: Scaffold(
         backgroundColor: const Color(0xFFF4F7FB),
-        body: IndexedStack(
-          index: safeIndex,
+        body: AppAnimatedTabBody(
+          key: ValueKey<String>(role),
+          currentIndex: safeIndex,
           children: screens,
         ),
-        bottomNavigationBar: Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            border: Border(
-              top: BorderSide(color: Color(0xFFE2E8F0), width: 1),
-            ),
-          ),
-          child: NavigationBarTheme(
-            data: NavigationBarThemeData(
-              labelTextStyle: WidgetStateProperty.resolveWith((states) {
-                final selected = states.contains(WidgetState.selected);
-                return TextStyle(
-                  fontSize: (isStoreOwner || isSystemStaff) ? 10.5 : 11.5,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected
-                      ? const Color(0xFF0E6BA8)
-                      : const Color(0xFF64748B),
-                );
-              }),
-              iconTheme: WidgetStateProperty.resolveWith(
-                (states) => IconThemeData(
-                  size: 20,
-                  color: states.contains(WidgetState.selected)
-                      ? const Color(0xFF0E6BA8)
-                      : const Color(0xFF64748B),
-                ),
-              ),
-            ),
-            child: NavigationBar(
-              selectedIndex: safeIndex,
-              onDestinationSelected: changeTab,
-              backgroundColor: Colors.white,
-              indicatorColor: const Color(0xFFE0F2FE),
-              elevation: 0,
-              height: 64,
-              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-              destinations: destinations,
-            ),
-          ),
+        bottomNavigationBar: AppFloatingNavBar(
+          selectedIndex: safeIndex,
+          onSelected: changeTab,
+          items: navItems,
+          compactLabels: isStoreOwner || isSystemStaff || isAdmin,
+          accentColor: accentColor,
+          accentSoftColor: accentSoftColor,
+          badges: pendingStoreOrders > 0 ? {3: pendingStoreOrders} : const {},
         ),
       ),
     );

@@ -1,3 +1,4 @@
+import '../widgets/app_motion.dart';
 import '../widgets/sample_a.dart';
 import '../widgets/user_avatar.dart';
 import 'customer_bank_accounts_screen.dart';
@@ -17,7 +18,9 @@ import '../services/services.dart';
 import 'address/address_list_screen.dart';
 import 'login_screen.dart';
 import 'main_layout.dart';
-import 'shop_stores_screen.dart';
+import 'store_wallet_screen.dart';
+import 'system_staff/system_staff_returns_screen.dart';
+import 'system_staff/system_staff_warranty_screen.dart';
 import 'change_password_screen.dart';
 import 'identity_verification_screen.dart';
 
@@ -55,9 +58,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.initState();
     _userService.addListener(_onProfileChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       try {
         final userProv = Provider.of<UserProvider>(context, listen: false);
-        userProv.loadProfile();
+        if (!userProv.isLoading) {
+          userProv.loadProfile();
+        }
         if (userProv.isCustomer) {
           Provider.of<AddressProvider>(context, listen: false).loadAddresses();
         }
@@ -203,8 +209,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 notifProv = Provider.of<NotificationProvider>(context, listen: false);
               } catch (_) {}
               Navigator.pop(ctx);
-              await NotificationService().unregisterTokenOnLogout();
-              await AuthApiService().logout();
+              try {
+                await NotificationService().unregisterTokenOnLogout();
+              } catch (_) {}
+              try {
+                await AuthApiService().logout();
+              } catch (_) {}
               userProv?.reset();
               deviceProv?.reset();
               orderProv?.reset();
@@ -310,24 +320,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
     Color? titleColor,
     required VoidCallback onTap,
   }) {
-    return InkWell(
+    return TactilePress(
       key: key,
-      onTap: () {
-        HapticFeedback.selectionClick();
-        onTap();
-      },
+      scaleDown: 0.985,
+      haptic: true,
+      borderRadius: BorderRadius.zero,
+      onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
         child: Row(
           children: [
-            Icon(icon, size: 20, color: iconColor),
-            const SizedBox(width: 14),
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: iconColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, size: 18, color: iconColor),
+            ),
+            const SizedBox(width: 13),
             Expanded(
               child: Text(
                 title,
                 style: TextStyle(
                   fontSize: 14.5,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.1,
                   color: titleColor ?? const Color(0xFF1E293B),
                 ),
               ),
@@ -398,8 +417,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(18),
                   border: Border.all(color: const Color(0xFFE2E8F0)),
+                  boxShadow: AppMotion.cardShadow,
                 ),
                 child: Row(
                   children: [
@@ -435,7 +455,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           const SizedBox(height: 6),
-                          Row(
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               Container(
                                 padding: const EdgeInsets.symmetric(
@@ -448,6 +471,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                                 child: Text(
                                   roleLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontSize: 11,
                                     fontWeight: FontWeight.w700,
@@ -456,21 +481,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                               ),
                               if (isStoreOwner &&
-                                  (userProv?.storeName?.isNotEmpty == true)) ...[
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    userProv!.storeName!,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: Color(0xFF475569),
-                                    ),
+                                  (userProv?.storeName?.isNotEmpty == true))
+                                Text(
+                                  userProv!.storeName!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF475569),
                                   ),
                                 ),
-                              ],
                             ],
                           ),
                         ],
@@ -485,8 +506,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(18),
                   border: Border.all(color: const Color(0xFFE2E8F0)),
+                  boxShadow: AppMotion.cardShadow,
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: Column(
@@ -572,19 +594,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ] else if (isStoreOwner) ...[
                       rowDivider,
                       _menuRow(
+                        icon: LucideIcons.wallet,
+                        iconColor: const Color(0xFF047857),
+                        title: 'Ví doanh thu & Rút tiền',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => const StoreWalletScreen(),
+                          ),
+                        ),
+                      ),
+                      rowDivider,
+                      _menuRow(
                         icon: LucideIcons.package,
+                        iconColor: const Color(0xFF047857),
                         title: 'Sản phẩm & tồn kho',
                         onTap: () => MainLayout.switchToTab(context, 1),
                       ),
                       rowDivider,
                       _menuRow(
                         icon: LucideIcons.cpu,
+                        iconColor: const Color(0xFF0E6BA8),
                         title: 'Danh sách nút bấm IoT',
                         onTap: () => MainLayout.switchToTab(context, 2),
                       ),
                       rowDivider,
                       _menuRow(
                         icon: LucideIcons.receiptText,
+                        iconColor: const Color(0xFFD97706),
                         title: 'Đơn hàng đại lý',
                         onTap: () => MainLayout.switchToTab(context, 3),
                       ),
@@ -592,18 +629,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       rowDivider,
                       _menuRow(
                         icon: LucideIcons.cpu,
+                        iconColor: const Color(0xFF0E7490),
                         title: 'Kho & cấp phát nút',
                         onTap: () => MainLayout.switchToTab(context, 1),
                       ),
                       rowDivider,
                       _menuRow(
                         icon: LucideIcons.shieldCheck,
+                        iconColor: const Color(0xFF0E7490),
                         title: 'Bảo hành thiết bị',
                         onTap: () => MainLayout.switchToTab(context, 2),
                       ),
                       rowDivider,
                       _menuRow(
                         icon: LucideIcons.rotateCcw,
+                        iconColor: const Color(0xFFD97706),
                         title: 'Nhận nút trả',
                         onTap: () => MainLayout.switchToTab(context, 3),
                       ),
@@ -611,25 +651,47 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       rowDivider,
                       _menuRow(
                         icon: LucideIcons.store,
+                        iconColor: const Color(0xFF4338CA),
                         title: 'Danh sách cửa hàng đối tác',
+                        onTap: () => MainLayout.switchToTab(context, 1),
+                      ),
+                      rowDivider,
+                      _menuRow(
+                        icon: LucideIcons.cpu,
+                        iconColor: const Color(0xFF0E6BA8),
+                        title: 'Kho nút bấm toàn hệ thống',
+                        onTap: () => MainLayout.switchToTab(context, 2),
+                      ),
+                      rowDivider,
+                      _menuRow(
+                        icon: LucideIcons.receiptText,
+                        iconColor: const Color(0xFFD97706),
+                        title: 'Đơn hàng toàn hệ thống',
+                        onTap: () => MainLayout.switchToTab(context, 3),
+                      ),
+                      rowDivider,
+                      _menuRow(
+                        icon: LucideIcons.shieldCheck,
+                        iconColor: const Color(0xFF0E7490),
+                        title: 'Phiếu bảo hành thiết bị',
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute<void>(
-                            builder: (_) => const ShopStoresScreen(),
+                            builder: (_) => const SystemStaffWarrantyScreen(),
                           ),
                         ),
                       ),
                       rowDivider,
                       _menuRow(
-                        icon: LucideIcons.cpu,
-                        title: 'Kho nút bấm toàn hệ thống',
-                        onTap: () => MainLayout.switchToTab(context, 1),
-                      ),
-                      rowDivider,
-                      _menuRow(
-                        icon: LucideIcons.receiptText,
-                        title: 'Đơn hàng toàn hệ thống',
-                        onTap: () => MainLayout.switchToTab(context, 2),
+                        icon: LucideIcons.rotateCcw,
+                        iconColor: const Color(0xFF7C3AED),
+                        title: 'Thu hồi nút & Hoàn cọc',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SystemStaffReturnsScreen(),
+                          ),
+                        ),
                       ),
                     ],
                     rowDivider,
@@ -706,18 +768,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
   }
-
-  Widget _groupTitle(String text) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    decoration: BoxDecoration(
-      color: const Color(0xFFF1F3F6),
-      borderRadius: BorderRadius.circular(8),
-    ),
-    child: Text(
-      text,
-      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-    ),
-  );
 
   void _editProfile() {
     final userProv = context.read<UserProvider?>();

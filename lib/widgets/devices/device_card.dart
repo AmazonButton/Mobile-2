@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
-import '../sample_a.dart';
+import '../app_motion.dart';
 
 /// Thẻ quản lý thiết bị nhỏ gọn, hiện đại với logo nhỏ và nút xóa tiện lợi.
 class DeviceCard extends StatelessWidget {
@@ -39,19 +39,16 @@ class DeviceCard extends StatelessWidget {
     final battery = batteryLevel.clamp(0, 100);
     final isLowBattery = battery <= 20;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+    return TactilePress(
+      scaleDown: 0.985,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: AppMotion.cardShadow,
+        ),
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(18),
@@ -138,7 +135,10 @@ class DeviceCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       if (unassigned) ...[
-                        Row(
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 2,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             const Text(
                               'Chưa gán sản phẩm',
@@ -148,25 +148,28 @@ class DeviceCard extends StatelessWidget {
                                 color: Color(0xFF64748B),
                               ),
                             ),
-                            const SizedBox(width: 6),
-                            InkWell(
-                              onTap: () {
-                                HapticFeedback.lightImpact();
-                                onSelectProduct?.call();
-                              },
-                              borderRadius: BorderRadius.circular(6),
-                              child: const Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                child: Text(
-                                  'Gán món ngay',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF2563EB),
+                            if (onSelectProduct != null)
+                              InkWell(
+                                onTap: () {
+                                  HapticFeedback.lightImpact();
+                                  onSelectProduct?.call();
+                                },
+                                borderRadius: BorderRadius.circular(6),
+                                child: const Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 2,
+                                  ),
+                                  child: Text(
+                                    'Gán món ngay',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: Color(0xFF2563EB),
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
                           ],
                         ),
                       ] else ...[
@@ -266,6 +269,7 @@ class DeviceCard extends StatelessWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }

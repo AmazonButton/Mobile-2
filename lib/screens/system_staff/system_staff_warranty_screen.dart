@@ -271,6 +271,19 @@ class _SystemStaffWarrantyScreenState extends State<SystemStaffWarrantyScreen> {
               children: [
                 Row(
                   children: [
+                    if (Navigator.of(context).canPop()) ...[
+                      IconButton(
+                        tooltip: 'Quay lại',
+                        onPressed: () => Navigator.of(context).maybePop(),
+                        icon: const Icon(LucideIcons.arrowLeft, size: 20),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 36,
+                          minHeight: 36,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
                     const Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,

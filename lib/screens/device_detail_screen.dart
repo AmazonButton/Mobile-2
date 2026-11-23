@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 
 import '../providers/device_provider.dart';
 import '../providers/user_provider.dart';
-import '../services/stock_service.dart';
 import '../widgets/devices/device_order_sheet.dart';
 import '../widgets/modals/product_selection_sheet.dart';
 import '../widgets/modals/rename_device_dialog.dart';
@@ -44,7 +43,6 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   late String _deviceName;
   late String _productName;
   late String _productPrice;
-  late String _productImageUrl;
   late int _battery;
   late String _wifiSsid;
   _DevicePage _page = _DevicePage.overview;
@@ -56,7 +54,6 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     _deviceName = widget.deviceName;
     _productName = widget.productName;
     _productPrice = widget.productPrice;
-    _productImageUrl = widget.productImageUrl ?? '';
     _battery = widget.battery;
     _wifiSsid = widget.wifiSsid;
   }
@@ -124,7 +121,6 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         setState(() {
           _productName = selectedProduct.shortName;
           _productPrice = selectedProduct.priceFormatted;
-          _productImageUrl = '';
         });
 
         _showToast('Đã gán $_productName vào $_deviceName');
@@ -150,7 +146,6 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       setState(() {
         _productName = device.product;
         _productPrice = device.price;
-        _productImageUrl = device.imageUrl ?? '';
       });
     }
     _showToast('Đã đổi cửa hàng. Hãy chọn sản phẩm của cửa hàng mới.');
@@ -234,7 +229,9 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     final device = context.select<DeviceProvider, dynamic>(
       (p) => widget.deviceId != null ? p.getDeviceById(widget.deviceId!) : null,
     );
-    final userAddress = context.watch<UserProvider?>()?.address;
+    final userProv = context.watch<UserProvider?>();
+    final isCustomer = userProv?.isCustomer ?? true;
+    final userAddress = userProv?.address;
     final deliveryAddress = (userAddress != null && userAddress.trim().isNotEmpty)
         ? userAddress.trim()
         : 'Địa chỉ nhận hàng mặc định của bạn';
@@ -326,7 +323,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
             ],
           ),
           actions: [
-            if (_page == _DevicePage.overview)
+            if (isCustomer && _page == _DevicePage.overview)
               Padding(
                 padding: const EdgeInsets.only(right: 14),
                 child: Center(
@@ -354,8 +351,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           ),
         ),
 
-        // ── STICKY FLOATING ORDER BAR (ĐẶC TRƯNG SỐ 1 CỦA GRAB) ──
-        bottomNavigationBar: _page == _DevicePage.overview
+        // ── STICKY FLOATING ORDER BAR (CHỈ DÀNH CHO KHÁCH HÀNG) ──
+        bottomNavigationBar: isCustomer && _page == _DevicePage.overview
             ? Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -491,6 +488,41 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: switch (_page) {
                     _DevicePage.overview => [
+                      if (!isCustomer) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFECFDF5),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0xFFA7F3D0)),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(
+                                LucideIcons.eye,
+                                color: Color(0xFF047857),
+                                size: 18,
+                              ),
+                              SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Chế độ giám sát thiết bị — chỉ xem trạng thái nút, pin và sản phẩm đang gán.',
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF065F46),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                      ],
+                      if (isCustomer) ...[
                       // ── 1. GRAB DELIVERY STRIP (Thanh địa chỉ giao hàng) ──
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -628,6 +660,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                       ),
 
                       const SizedBox(height: 14),
+                      ],
 
                       // ── 3. THẺ SẢN PHẨM CHUẨN GRAB MART / GRAB FOOD ──
                       Container(
@@ -891,7 +924,9 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                               // Wi-Fi
                               Expanded(
                                 child: InkWell(
-                                  onTap: () => _showPage(_DevicePage.connection),
+                                  onTap: isCustomer
+                                      ? () => _showPage(_DevicePage.connection)
+                                      : null,
                                   borderRadius: BorderRadius.circular(10),
                                   child: Row(
                                     children: [
@@ -926,11 +961,15 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                             ),
                                             const SizedBox(height: 1),
                                             Text(
-                                              hasWifi ? 'Chạm để đổi' : 'Cài Wi-Fi ngay',
-                                              style: const TextStyle(
+                                              isCustomer
+                                                  ? (hasWifi ? 'Chạm để đổi' : 'Cài Wi-Fi ngay')
+                                                  : (hasWifi ? 'Đã cấu hình' : 'Chưa cấu hình'),
+                                              style: TextStyle(
                                                 fontSize: 11,
                                                 fontWeight: FontWeight.w600,
-                                                color: Color(0xFF2563EB),
+                                                color: isCustomer
+                                                    ? const Color(0xFF2563EB)
+                                                    : const Color(0xFF64748B),
                                               ),
                                             ),
                                           ],
@@ -982,6 +1021,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 
                       const SizedBox(height: 14),
 
+                      if (isCustomer) ...[
                       // ── 6. CÀI ĐẶT THIẾT BỊ (Settings Card) ──
                       const Text(
                         'Cài đặt & Tùy chỉnh',
@@ -1046,6 +1086,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                           ],
                         ),
                       ),
+                      ],
                       const SizedBox(height: 24),
                     ],
 

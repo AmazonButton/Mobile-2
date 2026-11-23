@@ -17,13 +17,17 @@
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#0E6BA8">
+  <meta name="color-scheme" content="light">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="SmartOrder Button — Đặt hàng nhu yếu phẩm 1 chạm & quản lý thiết bị IoT.">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="smart_order_button">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="SmartOrder">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
@@ -34,24 +38,40 @@
   <link rel="preconnect" href="https://backend-fae8.onrender.com" crossorigin>
   <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; background: #ffffff; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      height: 100dvh;
+      background: #F4F7FB;
+      overscroll-behavior: none;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-text-size-adjust: 100%;
+    }
+    button, a, [role="button"] {
+      touch-action: manipulation;
+    }
     #sob-boot-loader {
       position: fixed; inset: 0; z-index: 99999;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      background: #ffffff; transition: opacity 0.25s ease-out;
+      background: #ffffff; transition: opacity 0.22s cubic-bezier(0.23, 1, 0.32, 1);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
     #sob-boot-loader.hidden { opacity: 0; pointer-events: none; }
     .sob-spinner {
       width: 38px; height: 38px; border-radius: 50%;
       border: 3px solid #E0F2FE; border-top-color: #0E6BA8;
-      animation: sob-spin 0.75s linear infinite;
+      animation: sob-spin 0.65s linear infinite;
     }
     .sob-label {
       margin-top: 14px; font-size: 13px; font-weight: 700;
-      color: #0E6BA8; letter-spacing: 0.3px;
+      color: #0E6BA8; letter-spacing: -0.1px;
     }
     @keyframes sob-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      #sob-boot-loader { transition-duration: 0.01ms; }
+    }
   </style>
 </head>
 <body>

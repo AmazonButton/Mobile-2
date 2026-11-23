@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:math' as math;
+import '../widgets/app_motion.dart';
 import '../widgets/sample_a.dart';
 import 'package:flutter/material.dart';
 import '../services/services.dart';
@@ -20,12 +22,15 @@ class _SplashScreenState extends State<SplashScreen>
   late final Animation<double> _fadeAnimation;
   bool _isTextShown = false;
   bool _isNavigated = false;
+  Timer? _navTimer;
   late final Future<bool> _authCheckFuture;
 
   Future<bool> _preloadAuth() async {
     try {
       final apiClient = ApiClient();
-      await apiClient.ensureAuthenticated().timeout(const Duration(seconds: 3));
+      if (!apiClient.isAuthenticated) {
+        await apiClient.ensureAuthenticated();
+      }
       return apiClient.isAuthenticated;
     } catch (_) {
       return false;
@@ -39,33 +44,46 @@ class _SplashScreenState extends State<SplashScreen>
     // Pre-check auth in parallel while splash animation plays
     _authCheckFuture = _preloadAuth();
 
-    // Snappy logo glide (~950ms)
+    // Snappy logo glide (~760ms, strong ease-out)
     _glideController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 950),
+      duration: const Duration(milliseconds: 760),
     );
 
-    // Subtle Wi-Fi wave pulse + gentle float while logo glides
+    // Subtle Wi-Fi wave pulse + gentle float while logo glides (respects reduced motion)
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1100),
-    )..repeat();
+    );
 
     // Wordmark & tagline fade in cleanly while staying completely still
     _fadeController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 420),
+      duration: const Duration(milliseconds: 320),
     );
 
     _fadeAnimation = CurvedAnimation(
       parent: _fadeController,
-      curve: Curves.easeOutCubic,
+      curve: AppMotion.easeOut,
     );
 
     _glideController.addListener(_onGlideProgress);
     _glideController.forward().then((_) {
-      Future.delayed(const Duration(milliseconds: 220), _navigateNext);
+      if (!mounted) return;
+      _navTimer?.cancel();
+      _navTimer = Timer(const Duration(milliseconds: 140), _navigateNext);
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (AppMotion.allowAmbient(context)) {
+      if (!_pulseController.isAnimating) _pulseController.repeat();
+    } else {
+      _pulseController.stop();
+      _pulseController.value = 0;
+    }
   }
 
   void _onGlideProgress() {
@@ -96,23 +114,24 @@ class _SplashScreenState extends State<SplashScreen>
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           final curved = CurvedAnimation(
             parent: animation,
-            curve: Curves.easeOutCubic,
+            curve: AppMotion.easeOut,
           );
           return FadeTransition(
             opacity: curved,
             child: ScaleTransition(
-              scale: Tween<double>(begin: 0.985, end: 1.0).animate(curved),
+              scale: Tween<double>(begin: 0.975, end: 1.0).animate(curved),
               child: child,
             ),
           );
         },
-        transitionDuration: const Duration(milliseconds: 340),
+        transitionDuration: const Duration(milliseconds: 260),
       ),
     );
   }
 
   @override
   void dispose() {
+    _navTimer?.cancel();
     _glideController.removeListener(_onGlideProgress);
     _glideController.dispose();
     _pulseController.dispose();
@@ -143,7 +162,7 @@ class _SplashScreenState extends State<SplashScreen>
                     _pulseController,
                   ]),
                   builder: (context, _) {
-                    final glideT = Curves.easeOutBack.transform(
+                    final glideT = AppMotion.easeOut.transform(
                       _glideController.value.clamp(0.0, 1.0),
                     );
                     final slideX = -115.0 * (1.0 - glideT);

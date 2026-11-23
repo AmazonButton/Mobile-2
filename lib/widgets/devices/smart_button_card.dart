@@ -1,3 +1,4 @@
+import '../app_motion.dart';
 import '../sample_a.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -64,13 +65,7 @@ class SmartButtonCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
+        boxShadow: AppMotion.cardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -117,23 +112,24 @@ class SmartButtonCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
-              InkWell(
+              TactilePress(
+                scaleDown: 0.9,
+                borderRadius: BorderRadius.circular(8),
                 onTap: () {
                   HapticFeedback.lightImpact();
                   onSettings?.call();
                 },
-                borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  width: 30,
-                  height: 30,
+                  width: 32,
+                  height: 32,
                   decoration: BoxDecoration(
                     color: const Color(0xFFF1F5F9),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(9),
                   ),
                   child: const Icon(
                     LucideIcons.slidersHorizontal,
                     size: 15,
-                    color: Color(0xFF2563EB),
+                    color: Color(0xFF0E6BA8),
                   ),
                 ),
               ),
@@ -273,48 +269,82 @@ class SmartButtonCard extends StatelessWidget {
 
           const SizedBox(height: 10),
 
-          // ── NÚT BẤM ĐẶT HÀNG: LUÔN SẴN SÀNG, BẤM 1 CHẠM ──
-          ElevatedButton(
-            onPressed: ordering
+          // ── NÚT BẤM ĐẶT HÀNG: LUÔN SẴN SÀNG, BẤM 1 CHẠM (Tactile + Color Morph) ──
+          TactilePress(
+            scaleDown: 0.96,
+            borderRadius: BorderRadius.circular(12),
+            onTap: ordering
                 ? null
                 : () {
                     HapticFeedback.mediumImpact();
                     onOrder?.call();
                   },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2563EB),
-              foregroundColor: Colors.white,
-              elevation: 0,
-              minimumSize: const Size.fromHeight(38),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(11),
+            child: AnimatedContainer(
+              duration: AppMotion.uiDuration,
+              curve: AppMotion.easeOut,
+              height: 40,
+              decoration: BoxDecoration(
+                color: ordered
+                    ? const Color(0xFF059669)
+                    : ordering
+                    ? const Color(0xFF0E6BA8).withValues(alpha: 0.72)
+                    : const Color(0xFF0E6BA8),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: ordering
+                    ? const []
+                    : [
+                        BoxShadow(
+                          color: (ordered
+                                  ? const Color(0xFF059669)
+                                  : const Color(0xFF0E6BA8))
+                              .withValues(alpha: 0.24),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
               ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (ordering)
-                  const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                  )
-                else ...[
-                  const Icon(LucideIcons.zap, size: 14),
-                  const SizedBox(width: 4),
-                  Text(
-                    ordered ? 'Đã đặt ⚡' : 'Đặt 1 chạm',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ],
+              child: Center(
+                child: AnimatedSwitcher(
+                  duration: AppMotion.fastDuration,
+                  switchInCurve: AppMotion.easeOut,
+                  switchOutCurve: AppMotion.easeOut,
+                  child: ordering
+                      ? const SizedBox(
+                          key: ValueKey('ordering'),
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                      : Row(
+                          key: ValueKey(ordered ? 'ordered' : 'idle'),
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              ordered
+                                  ? LucideIcons.checkCircle2
+                                  : LucideIcons.zap,
+                              size: 14,
+                              color: Colors.white,
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              ordered ? 'Đã đặt thành công' : 'Đặt 1 chạm',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
             ),
           ),
         ],

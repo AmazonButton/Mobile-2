@@ -10,6 +10,7 @@ import '../providers/device_provider.dart';
 import '../providers/order_provider.dart';
 import '../providers/user_provider.dart';
 import '../services/api_client.dart';
+import '../widgets/app_motion.dart';
 import '../widgets/sample_a.dart';
 import '../widgets/devices/device_card.dart';
 import '../widgets/devices/smart_button_card.dart';
@@ -29,6 +30,16 @@ class DevicesScreen extends StatefulWidget {
 class _DevicesScreenState extends State<DevicesScreen> {
   bool _connectOpen = false;
   final Map<String, String> _buttonStateMap = {};
+  final Map<String, Timer> _orderResetTimers = {};
+
+  @override
+  void dispose() {
+    for (final t in _orderResetTimers.values) {
+      t.cancel();
+    }
+    _orderResetTimers.clear();
+    super.dispose();
+  }
 
   Future<void> _handleOneTouchOrder(DeviceModel device) async {
     if (_buttonStateMap[device.id] == 'ordering') return;
@@ -57,7 +68,9 @@ class _DevicesScreenState extends State<DevicesScreen> {
           content: Text('⚡ Đã đặt 1 chạm: ${device.product} (${device.name})!'),
         ),
       );
-      Timer(const Duration(milliseconds: 2800), () {
+      _orderResetTimers[device.id]?.cancel();
+      _orderResetTimers[device.id] = Timer(const Duration(milliseconds: 2800), () {
+        _orderResetTimers.remove(device.id);
         if (mounted) setState(() => _buttonStateMap[device.id] = 'idle');
       });
     } catch (e) {
@@ -254,24 +267,40 @@ class _DevicesScreenState extends State<DevicesScreen> {
                 ),
                 const SizedBox(height: 20),
                 if (loading && devices.isEmpty)
-                  Shimmer.fromColors(
-                    baseColor: const Color(0xFFF1F5F9),
-                    highlightColor: const Color(0xFFFFFFFF),
-                    child: Column(
-                      children: List.generate(
-                        3,
-                        (index) => Container(
-                          height: 100,
-                          margin: const EdgeInsets.only(bottom: 12),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                  AppMotion.allowAmbient(context)
+                      ? Shimmer.fromColors(
+                          baseColor: const Color(0xFFF1F5F9),
+                          highlightColor: const Color(0xFFFFFFFF),
+                          child: Column(
+                            children: List.generate(
+                              3,
+                              (index) => Container(
+                                height: 100,
+                                margin: const EdgeInsets.only(bottom: 12),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: const Color(0xFFE2E8F0),
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    ),
-                  )
+                        )
+                      : Column(
+                          children: List.generate(
+                            3,
+                            (index) => Container(
+                              height: 100,
+                              margin: const EdgeInsets.only(bottom: 12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE2E8F0),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                          ),
+                        )
                 else if (devices.isEmpty && provider?.errorMessage != null)
                   ACard(
                     child: Column(
@@ -291,15 +320,23 @@ class _DevicesScreenState extends State<DevicesScreen> {
                 else if (devices.isEmpty) ...[
                   const SizedBox(height: 32),
                   const Center(child: ABuddy(size: 166)),
-                  const SizedBox(height: 32),
-                  const Text(
-                    'Chào người bạn mới!',
+                  const SizedBox(height: 28),
+                  Text(
+                    isStoreOwner
+                        ? 'Chưa có nút bấm IoT nào tại đại lý'
+                        : isAdmin
+                            ? 'Kho nút bấm đang trống'
+                            : 'Chào người bạn mới!',
                     style: SampleA.title,
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Thêm nút bấm đầu tiên.',
+                  const SizedBox(height: 10),
+                  Text(
+                    isStoreOwner
+                        ? 'Khi nhân viên kỹ thuật cấp phát hoặc khách hàng gán sản phẩm của đại lý vào nút bấm, danh sách sẽ hiển thị tại đây.'
+                        : isAdmin
+                            ? 'Chưa có thiết bị nào được đăng ký trên nền tảng.'
+                            : 'Thêm nút bấm đầu tiên.',
                     style: SampleA.body,
                     textAlign: TextAlign.center,
                   ),
@@ -361,39 +398,44 @@ class _DevicesScreenState extends State<DevicesScreen> {
                     ),
                     const SizedBox(height: 10),
                   ],
-                  for (final d in devices)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: DeviceCard(
-                        id: d.id,
-                        name: d.name,
-                        room: d.room,
-                        storeName: d.storeName,
-                        product: d.product,
-                        price: d.price,
-                        batteryLevel: d.battery,
-                        imageUrl: d.imageUrl,
-                        badgeText: d.badgeText,
-                        signal: d.signal,
-                        isOnline: d.isOnline,
-                        onTap: () => _detail(d),
-                        onSettings: () => _detail(d),
-                        onDelete: isCustomer ? () => _confirmDelete(d) : null,
-                        onSelectProduct: isAdmin
-                            ? null
-                            : () => ProductSelectionSheet.show(
-                                  context: context,
-                                  buttonName: d.name,
-                                  currentProductName: d.product,
-                                  deviceId: d.id,
-                                  onSave: (product, quantity) => context
-                                      .read<DeviceProvider>()
-                                      .updateDeviceProduct(
-                                        d.id,
-                                        product,
-                                        quantity: quantity,
-                                      ),
-                                ),
+                  for (int idx = 0; idx < devices.length; idx++)
+                    StaggeredReveal(
+                      index: idx < 5 ? idx : 4,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: DeviceCard(
+                          id: devices[idx].id,
+                          name: devices[idx].name,
+                          room: devices[idx].room,
+                          storeName: devices[idx].storeName,
+                          product: devices[idx].product,
+                          price: devices[idx].price,
+                          batteryLevel: devices[idx].battery,
+                          imageUrl: devices[idx].imageUrl,
+                          badgeText: devices[idx].badgeText,
+                          signal: devices[idx].signal,
+                          isOnline: devices[idx].isOnline,
+                          onTap: () => _detail(devices[idx]),
+                          onSettings: () => _detail(devices[idx]),
+                          onDelete: isCustomer
+                              ? () => _confirmDelete(devices[idx])
+                              : null,
+                          onSelectProduct: isCustomer
+                              ? () => ProductSelectionSheet.show(
+                                    context: context,
+                                    buttonName: devices[idx].name,
+                                    currentProductName: devices[idx].product,
+                                    deviceId: devices[idx].id,
+                                    onSave: (product, quantity) => context
+                                        .read<DeviceProvider>()
+                                        .updateDeviceProduct(
+                                          devices[idx].id,
+                                          product,
+                                          quantity: quantity,
+                                        ),
+                                  )
+                              : null,
+                        ),
                       ),
                     ),
                 ],

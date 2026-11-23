@@ -2,9 +2,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import '../../../widgets/app_motion.dart';
 
-/// Premium curved ocean-blue top header banner for HomeScreen.
-/// Displays location picker pill, notification bell, user avatar, greeting, and live device count.
+/// Role-coded curved top header banner for HomeScreen:
+/// - CUSTOMER: Ocean Blue (`#0E6BA8 -> #3894C4`)
+/// - STORE_OWNER: Emerald Merchant (`#064E3B -> #0D9488`)
+/// - SYSTEM_STAFF: Technical Slate-Cyan (`#0F172A -> #0E7490`)
+/// - ADMIN: Royal Indigo (`#1E1B4B -> #4338CA`)
 class HomeHeaderCard extends StatelessWidget {
   final File? userAvatar;
   final String? userAvatarUrl;
@@ -58,7 +62,20 @@ class HomeHeaderCard extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: image != null
-          ? Image(image: image, fit: BoxFit.cover)
+          ? Image(
+              image: image,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Center(
+                child: Text(
+                  userInitials.isNotEmpty ? userInitials : 'U',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            )
           : Center(
               child: Text(
                 userInitials.isNotEmpty ? userInitials : 'U',
@@ -78,65 +95,63 @@ class HomeHeaderCard extends StatelessWidget {
     final isAdmin =
         role == 'SUPER_ADMIN' || role == 'SYSTEM_ADMIN' || role == 'ADMIN';
     final isSystemStaff = role == 'SYSTEM_STAFF';
-    final isStoreOwner =
-        role == 'STORE_OWNER' ||
-        role == 'STORE_MANAGER' ||
-        role == 'STORE_STAFF' ||
-        role == 'STAFF_ORDER';
+    final isStoreOwner = role == 'STORE_OWNER';
 
     final gradientColors = isAdmin
         ? const [
             Color(0xFF1E1B4B),
             Color(0xFF312E81),
-            Color(0xFF1D4ED8),
+            Color(0xFF4338CA),
           ]
         : isSystemStaff
-            ? const [
-                Color(0xFF0F172A),
-                Color(0xFF155E75),
-                Color(0xFF0E6BA8),
-              ]
-            : isStoreOwner
-                ? const [
-                    Color(0xFF0F172A),
-                    Color(0xFF0F4C75),
-                    Color(0xFF0E7490),
-                  ]
-                : const [
-                    Color(0xFF0E6BA8),
-                    Color(0xFF287DA8),
-                    Color(0xFF3894C4),
-                  ];
+        ? const [
+            Color(0xFF0F172A),
+            Color(0xFF155E75),
+            Color(0xFF0E7490),
+          ]
+        : isStoreOwner
+        ? const [
+            Color(0xFF064E3B),
+            Color(0xFF047857),
+            Color(0xFF0D9488),
+          ]
+        : const [
+            Color(0xFF0E6BA8),
+            Color(0xFF287DA8),
+            Color(0xFF3894C4),
+          ];
 
     final pillIcon = isAdmin
         ? LucideIcons.shieldCheck
         : isSystemStaff
-            ? LucideIcons.wrench
-            : isStoreOwner
-                ? LucideIcons.store
-                : LucideIcons.mapPin;
+        ? LucideIcons.wrench
+        : isStoreOwner
+        ? LucideIcons.store
+        : LucideIcons.mapPin;
     final pillEyebrow = isAdmin
-        ? 'Cổng quản trị'
+        ? 'Cổng quản trị hệ thống'
         : isSystemStaff
-            ? 'Nhân viên hệ thống'
-            : isStoreOwner
-                ? 'Đại lý đang hoạt động'
-                : 'Giao đến';
+        ? 'Kỹ thuật hệ thống IoT'
+        : isStoreOwner
+        ? 'Cửa hàng đang mở bán'
+        : 'Giao đến';
     final pillTitle = isAdmin
-        ? 'Hệ thống SmartOrder IoT'
+        ? 'SmartOrder Platform Hub'
         : isSystemStaff
-            ? 'Kho nút & Bảo hành kỹ thuật'
-            : isStoreOwner
-                ? (storeAddress?.trim().isNotEmpty == true
-                    ? storeAddress!.trim()
-                    : (storeName?.trim().isNotEmpty == true
-                        ? storeName!.trim()
-                        : 'Quản lý đại lý'))
-                : (userAddress.trim().isEmpty
-                    ? 'Chọn địa chỉ giao hàng'
-                    : userAddress);
+        ? 'Kho nút & Bảo hành kỹ thuật'
+        : isStoreOwner
+        ? (storeAddress?.trim().isNotEmpty == true
+              ? storeAddress!.trim()
+              : (storeName?.trim().isNotEmpty == true
+                    ? storeName!.trim()
+                    : 'Cập nhật thông tin cửa hàng'))
+        : (userAddress.trim().isEmpty
+              ? 'Chọn địa chỉ giao hàng'
+              : userAddress);
 
-    return Container(
+    return AnimatedContainer(
+      duration: AppMotion.routeDuration,
+      curve: AppMotion.easeOut,
       width: double.infinity,
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -148,13 +163,12 @@ class HomeHeaderCard extends StatelessWidget {
       ),
       child: Stack(
         children: [
-          // Subtle decorative soft glow circles
           Positioned(
             top: -36,
             right: -28,
             child: Container(
-              width: 150,
-              height: 150,
+              width: 156,
+              height: 156,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: Colors.white.withValues(alpha: 0.08),
@@ -165,8 +179,8 @@ class HomeHeaderCard extends StatelessWidget {
             bottom: 12,
             left: -40,
             child: Container(
-              width: 110,
-              height: 110,
+              width: 116,
+              height: 116,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: Colors.white.withValues(alpha: 0.06),
@@ -182,12 +196,13 @@ class HomeHeaderCard extends StatelessWidget {
                 Row(
                   children: [
                     Expanded(
-                      child: InkWell(
+                      child: TactilePress(
+                        scaleDown: 0.97,
+                        borderRadius: BorderRadius.circular(14),
                         onTap: () {
                           HapticFeedback.lightImpact();
                           onLocationTap();
                         },
-                        borderRadius: BorderRadius.circular(14),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 11,
@@ -197,16 +212,12 @@ class HomeHeaderCard extends StatelessWidget {
                             color: Colors.white.withValues(alpha: 0.16),
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.22),
+                              color: Colors.white.withValues(alpha: 0.28),
                             ),
                           ),
                           child: Row(
                             children: [
-                              Icon(
-                                pillIcon,
-                                color: Colors.white,
-                                size: 17,
-                              ),
+                              Icon(pillIcon, color: Colors.white, size: 17),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Column(
@@ -217,7 +228,9 @@ class HomeHeaderCard extends StatelessWidget {
                                       style: TextStyle(
                                         fontSize: 10.5,
                                         fontWeight: FontWeight.w600,
-                                        color: Colors.white.withValues(alpha: 0.8),
+                                        color: Colors.white.withValues(
+                                          alpha: 0.82,
+                                        ),
                                       ),
                                     ),
                                     Text(
@@ -244,13 +257,13 @@ class HomeHeaderCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 10),
-                    // Notification Button
-                    InkWell(
+                    TactilePress(
+                      scaleDown: 0.92,
+                      borderRadius: BorderRadius.circular(20),
                       onTap: () {
                         HapticFeedback.lightImpact();
                         onNotificationTap?.call();
                       },
-                      borderRadius: BorderRadius.circular(20),
                       child: Container(
                         width: 40,
                         height: 40,
@@ -258,7 +271,7 @@ class HomeHeaderCard extends StatelessWidget {
                           shape: BoxShape.circle,
                           color: Colors.white.withValues(alpha: 0.16),
                           border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.22),
+                            color: Colors.white.withValues(alpha: 0.28),
                           ),
                         ),
                         child: Center(
@@ -275,13 +288,13 @@ class HomeHeaderCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    // User Avatar
-                    InkWell(
+                    TactilePress(
+                      scaleDown: 0.92,
+                      borderRadius: BorderRadius.circular(20),
                       onTap: () {
                         HapticFeedback.lightImpact();
                         onAccountTap();
                       },
-                      borderRadius: BorderRadius.circular(20),
                       child: _buildAvatar(),
                     ),
                   ],
@@ -289,13 +302,17 @@ class HomeHeaderCard extends StatelessWidget {
 
                 const SizedBox(height: 18),
 
-                // Greeting & Headline (Role-aware)
-                Text(
-                  'Chào ${userShortName.trim().isEmpty ? 'bạn' : userShortName} 👋',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white.withValues(alpha: 0.88),
+                // Greeting (tappable to open Account) & Role Headline
+                GestureDetector(
+                  onTap: onAccountTap,
+                  behavior: HitTestBehavior.opaque,
+                  child: Text(
+                    'Chào ${userShortName.trim().isEmpty ? 'bạn' : userShortName} 👋',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white.withValues(alpha: 0.9),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -303,12 +320,12 @@ class HomeHeaderCard extends StatelessWidget {
                   isAdmin
                       ? 'Trung tâm điều hành'
                       : isSystemStaff
-                          ? 'Vận hành thiết bị IoT'
-                          : isStoreOwner
-                              ? (storeName?.isNotEmpty == true
-                                  ? storeName!
-                                  : 'Quản lý cửa hàng')
-                              : 'Hôm nay nhà mình cần gì?',
+                      ? 'Vận hành thiết bị IoT'
+                      : isStoreOwner
+                      ? (storeName?.isNotEmpty == true
+                            ? storeName!
+                            : 'Bảng điều phối cửa hàng')
+                      : 'Hôm nay nhà mình cần gì?',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -321,37 +338,37 @@ class HomeHeaderCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
+                    color: Colors.white.withValues(alpha: 0.16),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        width: 7,
-                        height: 7,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF4ADE80),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 7),
-                      Text(
-                        isAdmin
-                            ? 'Quản trị hệ thống • $deviceCount thiết bị'
-                            : isSystemStaff
-                                ? 'Nhân viên hệ thống • $deviceCount nút bấm'
-                                : isStoreOwner
-                                    ? 'Chủ cửa hàng • $deviceCount nút đang hoạt động'
-                                    : (deviceCount > 0
-                                        ? '$deviceCount nút bấm sẵn sàng • Đặt hàng 1 chạm'
-                                        : 'Đặt hàng nhu yếu phẩm 1 chạm siêu tốc'),
-                        style: const TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
+                      const PulsingDot(color: Color(0xFF4ADE80), size: 6.5),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          isAdmin
+                              ? 'Quản trị hệ thống • $deviceCount thiết bị'
+                              : isSystemStaff
+                              ? 'Kỹ thuật hệ thống • $deviceCount nút bấm'
+                              : isStoreOwner
+                              ? 'Chủ cửa hàng • $deviceCount nút gắn đại lý'
+                              : (deviceCount > 0
+                                    ? '$deviceCount nút bấm sẵn sàng • Đặt hàng 1 chạm'
+                                    : 'Đặt hàng nhu yếu phẩm 1 chạm siêu tốc'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ],

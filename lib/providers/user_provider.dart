@@ -27,19 +27,26 @@ class UserProvider extends ChangeNotifier {
   bool get isAdmin =>
       _role == 'SUPER_ADMIN' || _role == 'SYSTEM_ADMIN' || _role == 'ADMIN';
   bool get isSystemStaff => _role == 'SYSTEM_STAFF';
-  bool get isStoreOwner =>
-      _role == 'STORE_OWNER' ||
-      _role == 'STORE_MANAGER' ||
-      _role == 'STORE_STAFF' ||
-      _role == 'STAFF_ORDER';
+  bool get isStoreOwner => _role == 'STORE_OWNER';
   bool get isCustomer => !isAdmin && !isStoreOwner && !isSystemStaff;
   String get roleLabel => isAdmin
       ? 'Quản trị viên'
       : isSystemStaff
-          ? 'Nhân viên hệ thống'
+          ? 'Kỹ thuật hệ thống'
           : isStoreOwner
               ? 'Chủ cửa hàng'
               : 'Khách hàng';
+
+  void updateStoreInfo({String? name, String? address, String? storeId}) {
+    if (name != null && name.trim().isNotEmpty) _storeName = name.trim();
+    if (address != null && address.trim().isNotEmpty) {
+      _storeAddress = address.trim();
+    }
+    if (storeId != null && storeId.trim().isNotEmpty) {
+      _storeId = storeId.trim();
+    }
+    notifyListeners();
+  }
 
   void _extractStoreInfo(Map<String, dynamic> me) {
     final directStoreId = me['storeId']?.toString().trim();
@@ -96,6 +103,8 @@ class UserProvider extends ChangeNotifier {
 
   /// Đồng bộ ngay role & storeId từ payload đăng nhập (không bị nháy giao diện role cũ)
   void applyLoginUser(Map<String, dynamic> user) {
+    _sessionRevision++;
+    accountId = (user['id'] ?? user['userId'])?.toString();
     final rawRole = user['role']?.toString().trim().toUpperCase();
     if (rawRole != null && rawRole.isNotEmpty) {
       _role = rawRole;
@@ -141,15 +150,17 @@ class UserProvider extends ChangeNotifier {
     try {
       final me = await _authService.getMe();
       if (session != _sessionRevision) return;
-      accountId = (me['id'] ?? me['userId'])?.toString();
-      final rawRole = me['role']?.toString().trim().toUpperCase();
-      if (rawRole != null && rawRole.isNotEmpty) {
-        _role = rawRole;
+      if (me.isNotEmpty) {
+        accountId = (me['id'] ?? me['userId'])?.toString();
+        final rawRole = me['role']?.toString().trim().toUpperCase();
+        if (rawRole != null && rawRole.isNotEmpty) {
+          _role = rawRole;
+        }
+        _storeId = null;
+        _storeName = null;
+        _storeAddress = null;
+        _extractStoreInfo(me);
       }
-      _storeId = null;
-      _storeName = null;
-      _storeAddress = null;
-      _extractStoreInfo(me);
       if (isStoreOwner &&
           (_storeName == null ||
               _storeName!.isEmpty ||
@@ -171,6 +182,7 @@ class UserProvider extends ChangeNotifier {
           }
         } catch (_) {}
       }
+      if (session != _sessionRevision) return;
       if (avatarRevision == _avatarRevision) {
         _localProfile.updateAvatarUrl(me['avatarUrl']?.toString());
       }
@@ -201,10 +213,13 @@ class UserProvider extends ChangeNotifier {
       }
       _errorMessage = null;
     } catch (e) {
+      if (session != _sessionRevision) return;
       _errorMessage = e.toString();
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (session == _sessionRevision) {
+        _isLoading = false;
+        notifyListeners();
+      }
     }
   }
 

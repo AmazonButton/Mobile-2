@@ -159,13 +159,11 @@ class NotificationProvider extends ChangeNotifier {
     }
   }
 
-  /// Clears all notifications.
+  /// Clears all notifications (in memory and persisted storage).
   Future<void> clearAll() async {
-    if (_notifications.isNotEmpty) {
-      _notifications.clear();
-      notifyListeners();
-      await _saveToStorage();
-    }
+    _notifications.clear();
+    notifyListeners();
+    await _saveToStorage();
   }
 
   /// Đồng bộ cảnh báo Hết hàng (OUT_OF_STOCK) & Sắp hết hàng (LOW_STOCK) cho Chủ cửa hàng
@@ -186,7 +184,10 @@ class NotificationProvider extends ChangeNotifier {
           ) ??
           0;
       final reserved = int.tryParse(
-            ((inv is Map ? inv['quantityReserved'] : null) ??
+            ((inv is Map
+                        ? (inv['reservedQuantity'] ?? inv['quantityReserved'])
+                        : null) ??
+                    p['reservedQuantity'] ??
                     p['reservedStock'] ??
                     0)
                 .toString(),
