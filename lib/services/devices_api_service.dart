@@ -89,6 +89,7 @@ class DevicesApiService {
     final response = await _client.get(ApiConfig.deviceDetail(id));
     final data = Map<String, dynamic>.from(response['data'] ?? response);
     if (data['buttonId'] == null) return data;
+    if (data['canOrder'] is bool && data['rentalId'] != null) return data;
     return _withUsage(data, await _usageByButton());
   }
 

@@ -54,26 +54,36 @@ class StoresApiService {
     final response = await _client.get(ApiConfig.rentalPackages);
     final data = response['data'] ?? response;
     if (data is List) return data;
+    if (data is Map && data['items'] is List) return data['items'] as List;
+    if (response['items'] is List) return response['items'] as List;
     return [];
   }
 
-  /// Đặt thuê gói nút bấm IoT
+  /// Đặt thuê gói nút bấm IoT (khớp CreateRentalOrderDto + bắt buộc X-Idempotency-Key)
   Future<Map<String, dynamic>> orderRentalPackage({
     required String packageId,
     int months = 1,
     String? deliveryAddress,
+    String? idempotencyKey,
   }) async {
+    final safeMonths = months.clamp(1, 12);
     final body = <String, dynamic>{
       'packageId': int.tryParse(packageId) ?? packageId,
-      'monthsRented': months,
-      'months': months,
+      'monthsRented': safeMonths,
     };
-    if (deliveryAddress != null && deliveryAddress.isNotEmpty) {
-      body['deliveryAddress'] = deliveryAddress;
-    }
+    final key =
+        idempotencyKey ??
+        'rent_${DateTime.now().microsecondsSinceEpoch}_$packageId';
 
-    final response = await _client.post(ApiConfig.rentalOrder, body: body);
-    return response['data'] ?? response;
+    final response = await _client.post(
+      ApiConfig.rentalOrder,
+      headers: {'X-Idempotency-Key': key},
+      body: body,
+    );
+    final data = response['data'] ?? response;
+    return data is Map
+        ? Map<String, dynamic>.from(data)
+        : <String, dynamic>{'data': data};
   }
 
   /// Danh sách gói thiết bị đang thuê của người dùng
@@ -81,6 +91,7 @@ class StoresApiService {
     final response = await _client.get(ApiConfig.myRentals);
     final data = response['data'] ?? response;
     if (data is List) return data;
+    if (data is Map && data['items'] is List) return data['items'] as List;
     return [];
   }
 

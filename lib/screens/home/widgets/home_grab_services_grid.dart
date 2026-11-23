@@ -256,7 +256,8 @@ class HomeGrabServicesGrid extends StatelessWidget {
                           HapticFeedback.lightImpact();
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) => const CustomerButtonsScreen(),
+                              builder: (_) =>
+                                  const CustomerButtonsScreen(initialTab: 0),
                             ),
                           );
                         },
