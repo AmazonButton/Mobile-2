@@ -58,17 +58,21 @@ class NotificationItem {
   }
 
   factory NotificationItem.fromJson(Map<String, dynamic> json) {
+    final nestedData = json['data'] is Map ? Map<String, dynamic>.from(json['data'] as Map) : const <String, dynamic>{};
+    final readAt = json['readAt'] ?? json['read_at'];
+    final isReadVal = json['isRead'] == true || (readAt != null && readAt.toString().isNotEmpty);
     return NotificationItem(
-      id: json['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      id: (json['notificationId'] ?? json['notification_id'] ?? json['id'])?.toString() ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
       title: json['title']?.toString() ?? 'Thông báo',
-      body: json['body']?.toString() ?? '',
-      createdAt: json['createdAt'] != null
-          ? (DateTime.tryParse(json['createdAt'].toString()) ?? DateTime.now())
+      body: (json['body'] ?? json['message'])?.toString() ?? '',
+      createdAt: (json['createdAt'] ?? json['created_at']) != null
+          ? (DateTime.tryParse((json['createdAt'] ?? json['created_at']).toString()) ?? DateTime.now())
           : DateTime.now(),
-      isRead: json['isRead'] == true,
+      isRead: isReadVal,
       type: json['type']?.toString() ?? 'ORDER_CREATED',
-      orderId: json['orderId']?.toString(),
-      orderCode: json['orderCode']?.toString(),
+      orderId: (json['orderId'] ?? nestedData['orderId'])?.toString(),
+      orderCode: (json['orderCode'] ?? nestedData['orderCode'])?.toString(),
     );
   }
 

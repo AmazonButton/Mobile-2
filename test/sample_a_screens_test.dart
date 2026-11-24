@@ -24,7 +24,7 @@ import 'package:smart_order_button/widgets/sample_a.dart';
 class FixtureDevices extends DeviceProvider {
   FixtureDevices(List<DeviceModel> devices) : super(initialDevices: devices);
   @override
-  Future<void> loadDevices() async {}
+  Future<void> loadDevices({bool includeCustomerUsage = true}) async {}
 }
 
 class FixtureOrders extends OrderProvider {

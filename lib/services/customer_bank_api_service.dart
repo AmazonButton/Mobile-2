@@ -66,4 +66,15 @@ class CustomerBankApiService {
     _rows(response);
     return Map<String, dynamic>.from(response);
   }
+
+  /// Đặt tài khoản ngân hàng làm mặc định (PATCH /customers/me/bank-accounts/:id/default)
+  Future<CustomerBankAccount> setDefaultAccount(String id) async =>
+      CustomerBankAccount.fromJson(
+        _data(await _client.patch('${_account(id)}/default')),
+      );
+
+  /// Xóa / Hủy liên kết tài khoản ngân hàng (DELETE /customers/me/bank-accounts/:id)
+  Future<void> deleteAccount(String id) async {
+    await _client.delete(_account(id));
+  }
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../services/phone_auth_service.dart';
 import '../services/auth_api_service.dart';
 import 'dashboard_screen.dart';
@@ -39,9 +40,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final GlobalKey<StepWifiSetupViewState> _wifiStepKey =
       GlobalKey<StepWifiSetupViewState>();
 
-  // Confirmed resident identity
+  // Confirmed resident identity & real hardware pairing state
   String _confirmedFullName = '';
   String _confirmedPhone = '';
+  String _pairedDeviceId = '';
+  String _pairedDeviceName = 'Nút bấm SmartOrder';
+  BluetoothDevice? _pairedBleDevice;
+  String? _provisioningSessionId;
+  String _configuredWifiSsid = 'Wi-Fi 2.4GHz';
   String _verificationId = '';
   int? _resendToken;
   bool _isSendingOtp = false;
@@ -287,18 +293,42 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     // Step 3: BLE Discovery & Pairing
                     StepBlePairingView(
                       key: _bleStepKey,
+                      onDevicePaired: ({
+                        required String deviceId,
+                        required String deviceName,
+                        BluetoothDevice? bleDevice,
+                        String? sessionId,
+                      }) {
+                        setState(() {
+                          _pairedDeviceId = deviceId;
+                          _pairedDeviceName = deviceName;
+                          _pairedBleDevice = bleDevice;
+                          _provisioningSessionId = sessionId;
+                        });
+                      },
                       onPairingComplete: () => _goToStep(4),
+                      onSkip: _finishAndGoToApp,
                     ),
 
                     // Step 4: WiFi Setup
                     StepWifiSetupView(
                       key: _wifiStepKey,
+                      deviceId: _pairedDeviceId,
+                      selectedDeviceName: _pairedDeviceName,
+                      bleDevice: _pairedBleDevice,
+                      sessionId: _provisioningSessionId,
+                      onWifiProvisioned: (ssid) {
+                        setState(() => _configuredWifiSsid = ssid);
+                      },
                       onWifiConnected: () => _goToStep(5),
+                      onSkip: _finishAndGoToApp,
                     ),
 
                     // Step 5: Success & Completion
                     StepSuccessView(
                       fullName: _confirmedFullName,
+                      deviceName: _pairedDeviceName,
+                      wifiSsid: _configuredWifiSsid,
                       onFinish: _finishAndGoToApp,
                       onAddAnotherDevice: () => _goToStep(3),
                     ),

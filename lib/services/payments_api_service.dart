@@ -87,4 +87,18 @@ class PaymentsApiService {
     );
     return response;
   }
+
+  /// Chuyển đổi phương thức thanh toán cho đơn hàng (COD <-> PAYOS)
+  Future<Map<String, dynamic>> changeOrderPaymentMethod({
+    required String orderId,
+    required String paymentMethod,
+  }) async {
+    final response = await _client.post(
+      ApiConfig.paymentsChangeMethod(Uri.encodeComponent(orderId)),
+      body: {'paymentMethod': paymentMethod.trim().toUpperCase()},
+    );
+    return response is Map<String, dynamic>
+        ? response
+        : <String, dynamic>{'data': response};
+  }
 }

@@ -1,8 +1,8 @@
 import '../../../widgets/user_avatar.dart';
 import 'dart:io';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 
 import '../../login_screen.dart';
@@ -323,11 +323,11 @@ class HomeAccountSheet extends StatelessWidget {
                   Navigator.pop(context);
                   MainLayout.switchToTab(
                     context,
-                    (isStoreOwner || isSystemStaff) ? 4 : 3,
+                    (isStoreOwner || isSystemStaff || isAdmin) ? 4 : 3,
                   );
                 },
                 icon: const Icon(
-                  CupertinoIcons.person_crop_circle,
+                  LucideIcons.circleUser,
                   size: 18,
                   color: Colors.white,
                 ),

@@ -22,7 +22,7 @@ class _SystemStaffWarrantyScreenState extends State<SystemStaffWarrantyScreen> {
   List<Map<String, dynamic>> _tickets = [];
   bool _loading = true;
   String _statusFilter = '';
-  String _groupFilter = '';
+  final String _groupFilter = '';
 
   @override
   void initState() {
@@ -124,56 +124,66 @@ class _SystemStaffWarrantyScreenState extends State<SystemStaffWarrantyScreen> {
     final noteCtrl = TextEditingController();
     String group = 'GROUP_A';
     String fault = 'HARDWARE_FAULT';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Lập phiếu bảo hành', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: devCtrl, decoration: const InputDecoration(labelText: 'Mã nút bấm * (VD: SOB-000003)')),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  initialValue: group,
-                  decoration: const InputDecoration(labelText: 'Nhóm lỗi'),
-                  items: const [
-                    DropdownMenuItem(value: 'GROUP_A', child: Text('Nhóm A · Lỗi kỹ thuật (0%)')),
-                    DropdownMenuItem(value: 'GROUP_B', child: Text('Nhóm B · Mạng / Trẻ em')),
-                    DropdownMenuItem(value: 'GROUP_C', child: Text('Nhóm C · Vỡ vỏ nhẹ (30%)')),
-                    DropdownMenuItem(value: 'GROUP_D', child: Text('Nhóm D · Hỏng nặng/Mất (70-100%)')),
-                  ],
-                  onChanged: (v) => setLocal(() {
-                    group = v ?? 'GROUP_A';
-                    fault = group == 'GROUP_A'
-                        ? 'HARDWARE_FAULT'
-                        : group == 'GROUP_B'
-                            ? 'WIFI_CHANGED'
-                            : group == 'GROUP_C'
-                                ? 'TIER_C_SHELL_CRACK_30%'
-                                : 'WATER_DAMAGE';
-                  }),
-                ),
-                const SizedBox(height: 8),
-                TextField(controller: noteCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Ghi chú ngoại quan')),
-              ],
+    bool? ok;
+    String devText = '';
+    String noteText = '';
+    try {
+      ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setLocal) => AlertDialog(
+            title: const Text('Lập phiếu bảo hành', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(controller: devCtrl, decoration: const InputDecoration(labelText: 'Mã nút bấm * (VD: SOB-000003)')),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: group,
+                    decoration: const InputDecoration(labelText: 'Nhóm lỗi'),
+                    items: const [
+                      DropdownMenuItem(value: 'GROUP_A', child: Text('Nhóm A · Lỗi kỹ thuật (0%)')),
+                      DropdownMenuItem(value: 'GROUP_B', child: Text('Nhóm B · Mạng / Trẻ em')),
+                      DropdownMenuItem(value: 'GROUP_C', child: Text('Nhóm C · Vỡ vỏ nhẹ (30%)')),
+                      DropdownMenuItem(value: 'GROUP_D', child: Text('Nhóm D · Hỏng nặng/Mất (70-100%)')),
+                    ],
+                    onChanged: (v) => setLocal(() {
+                      group = v ?? 'GROUP_A';
+                      fault = group == 'GROUP_A'
+                          ? 'HARDWARE_FAULT'
+                          : group == 'GROUP_B'
+                              ? 'WIFI_CHANGED'
+                              : group == 'GROUP_C'
+                                  ? 'TIER_C_SHELL_CRACK_30%'
+                                  : 'WATER_DAMAGE';
+                    }),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(controller: noteCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Ghi chú ngoại quan')),
+                ],
+              ),
             ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Tạo phiếu')),
+            ],
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Tạo phiếu')),
-          ],
         ),
-      ),
-    );
-    if (ok != true || devCtrl.text.trim().isEmpty) return;
+      );
+      devText = devCtrl.text.trim();
+      noteText = noteCtrl.text.trim();
+    } finally {
+      devCtrl.dispose();
+      noteCtrl.dispose();
+    }
+    if (ok != true || devText.isEmpty) return;
     try {
       await _api.createWarrantyTicket({
-        'deviceId': devCtrl.text.trim().toUpperCase(),
+        'deviceId': devText.toUpperCase(),
         'faultGroup': group,
         'faultCode': fault,
-        'inspectionNote': noteCtrl.text.trim().isEmpty ? 'Kiểm tra từ Mobile Staff' : noteCtrl.text.trim(),
+        'inspectionNote': noteText.isEmpty ? 'Kiểm tra từ Mobile Staff' : noteText,
       });
       _snack('Đã tạo phiếu bảo hành thành công!');
       _load();
@@ -186,32 +196,42 @@ class _SystemStaffWarrantyScreenState extends State<SystemStaffWarrantyScreen> {
     final id = (ticket['ticketId'] ?? ticket['id']).toString();
     final replaceCtrl = TextEditingController();
     final noteCtrl = TextEditingController(text: 'Đã duyệt đổi mới 1-1 từ kho.');
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Duyệt đổi nút 1-1', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Nút thay thế tự động kế thừa hợp đồng thuê, khách hàng và cấu hình.', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-            const SizedBox(height: 10),
-            TextField(controller: replaceCtrl, decoration: const InputDecoration(labelText: 'Mã nút thay thế (để trống = tự chọn)')),
-            const SizedBox(height: 8),
-            TextField(controller: noteCtrl, decoration: const InputDecoration(labelText: 'Ghi chú kỹ thuật')),
+    bool? ok;
+    String replaceText = '';
+    String noteText = '';
+    try {
+      ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Duyệt đổi nút 1-1', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Nút thay thế tự động kế thừa hợp đồng thuê, khách hàng và cấu hình.', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+              const SizedBox(height: 10),
+              TextField(controller: replaceCtrl, decoration: const InputDecoration(labelText: 'Mã nút thay thế (để trống = tự chọn)')),
+              const SizedBox(height: 8),
+              TextField(controller: noteCtrl, decoration: const InputDecoration(labelText: 'Ghi chú kỹ thuật')),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Xác nhận đổi')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Xác nhận đổi')),
-        ],
-      ),
-    );
+      );
+      replaceText = replaceCtrl.text.trim();
+      noteText = noteCtrl.text.trim();
+    } finally {
+      replaceCtrl.dispose();
+      noteCtrl.dispose();
+    }
     if (ok != true) return;
     try {
       await _api.approveSwap(
         id,
-        replacementDeviceId: replaceCtrl.text.trim(),
-        adminNote: noteCtrl.text.trim(),
+        replacementDeviceId: replaceText,
+        adminNote: noteText,
       );
       _snack('Duyệt đổi 1-1 thành công!');
       _load();

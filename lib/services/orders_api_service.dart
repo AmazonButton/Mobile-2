@@ -14,11 +14,11 @@ class OrdersApiService {
   final ApiClient _client = ApiClient();
   final Set<String> _ordering = {};
 
-  /// Lấy danh sách lịch sử đơn hàng của người dùng được ánh xạ thành strongly-typed OrderModel
-  Future<List<OrderModel>> getOrders({String? status}) async {
+  /// Lấy danh sách lịch sử đơn hàng của người dùng (giới hạn tối đa 10 trang tránh lặp vô hạn)
+  Future<List<OrderModel>> getOrders({String? status, int maxPages = 10}) async {
     final orders = <String, OrderModel>{};
     var page = 1;
-    while (true) {
+    while (page <= maxPages) {
       final batch = await getOrdersPage(page: page, status: status);
       for (final order in batch.items) {
         orders[order.id] = order;
@@ -26,6 +26,7 @@ class OrdersApiService {
       if (!batch.hasNextPage) return orders.values.toList();
       page++;
     }
+    return orders.values.toList();
   }
 
   Future<PageResult<OrderModel>> getOrdersPage({
@@ -143,22 +144,37 @@ class OrdersApiService {
     return response['data'] ?? response;
   }
 
-  /// Đặt hàng siêu tốc 1 chạm bằng deviceId của nút bấm IoT
-  Future<Map<String, dynamic>> quickReorder({required String deviceId}) async {
+  /// Đặt hàng siêu tốc 1 chạm bằng deviceId của nút bấm IoT (hỗ trợ addressId & X-Idempotency-Key)
+  Future<Map<String, dynamic>> quickReorder({
+    required String deviceId,
+    String? addressId,
+    String? idempotencyKey,
+  }) async {
     final id = deviceId.trim();
     if (!_ordering.add(id)) {
       throw ApiException(message: 'Đang xử lý đặt hàng', statusCode: 409);
     }
     try {
       await StockService.instance.verify(id);
+      final key =
+          (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
+          ? idempotencyKey.trim()
+          : 'app-ord-${DateTime.now().microsecondsSinceEpoch}';
+      final body = <String, dynamic>{
+        'deviceId': id,
+        if (addressId != null && addressId.trim().isNotEmpty)
+          'addressId': addressId.trim(),
+        'idempotencyKey': key,
+      };
       final response = await _client.post(
         ApiConfig.ordersQuickReorder,
-        body: {'deviceId': id},
+        headers: {'X-Idempotency-Key': key},
+        body: body,
       );
-      await StockService.instance.refreshDevice(id);
+      await StockService.instance.refreshDevice(id, force: true);
       return response;
     } catch (error) {
-      await StockService.instance.refreshDevice(id);
+      await StockService.instance.refreshDevice(id, force: true);
       if (error is ApiException &&
           error.errorCode != 'MOBILE_STOCK_UNAVAILABLE' &&
           (error.message.contains('P0007') ||
@@ -185,7 +201,7 @@ class OrdersApiService {
     return response;
   }
 
-  /// Cập nhật trạng thái đơn hàng (Store Owner / Staff: CONFIRMED, PREPARING, READY_FOR_DELIVERY, SHIPPING, DELIVERED, COMPLETED)
+  /// Cập nhật trạng thái đơn hàng (khớp UpdateOrderStatusDto: chỉ gửi status)
   Future<Map<String, dynamic>> updateOrderStatus(
     String id, {
     required String status,
@@ -193,31 +209,24 @@ class OrdersApiService {
   }) async {
     final response = await _client.patch(
       ApiConfig.orderStatus(id),
-      body: {
-        'status': status,
-        if (note != null && note.isNotEmpty) 'note': note,
-      },
+      body: {'status': status},
     );
     return response['data'] is Map<String, dynamic>
         ? response['data'] as Map<String, dynamic>
         : response;
   }
 
-  /// Tính phí giao hàng Goong 5km freeship trực tiếp từ Backend
+  /// Tính phí giao hàng Goong 5km freeship trực tiếp từ Backend (khớp DeliveryQuoteDto)
   Future<Map<String, dynamic>> getDeliveryQuote({
-    required dynamic storeId,
-    String? deliveryAddress,
-    double? latitude,
-    double? longitude,
+    required String deviceId,
+    String? addressId,
   }) async {
     final response = await _client.post(
       ApiConfig.ordersDeliveryQuote,
       body: {
-        'storeId': storeId,
-        if (deliveryAddress != null && deliveryAddress.isNotEmpty)
-          'deliveryAddress': deliveryAddress,
-        if (latitude != null) 'latitude': latitude,
-        if (longitude != null) 'longitude': longitude,
+        'deviceId': deviceId.trim(),
+        if (addressId != null && addressId.trim().isNotEmpty)
+          'addressId': addressId.trim(),
       },
     );
     return response['data'] is Map<String, dynamic>
@@ -235,5 +244,102 @@ class OrdersApiService {
       body: {'deviceId': deviceId, 'eventType': eventType},
     );
     return response;
+  }
+
+  /// Đặt hàng trực tiếp từ cửa hàng (Storefront Checkout không cần nút IoT)
+  Future<Map<String, dynamic>> createStorefrontOrder({
+    required Map<String, dynamic> body,
+    String? idempotencyKey,
+  }) async {
+    final key =
+        (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
+        ? idempotencyKey.trim()
+        : 'sf_${DateTime.now().microsecondsSinceEpoch}';
+    final response = await _client.post(
+      ApiConfig.storefrontOrders,
+      headers: {'X-Idempotency-Key': key},
+      body: body,
+    );
+    return response is Map<String, dynamic>
+        ? response
+        : <String, dynamic>{'data': response};
+  }
+
+  /// Hàng đợi giao hàng của cửa hàng (GET /orders/delivery-queue)
+  Future<List<OrderModel>> getDeliveryQueue({
+    int page = 1,
+    int pageSize = 30,
+  }) async {
+    final response = await _client.get(
+      ApiConfig.ordersDeliveryQueue,
+      queryParams: {'page': page, 'pageSize': pageSize},
+    );
+    final raw = response['data'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => OrderModel.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  /// Nhận giao đơn hàng (POST /orders/:id/claim)
+  Future<Map<String, dynamic>> claimOrder(String id) async {
+    final response = await _client.post(ApiConfig.orderClaim(id));
+    return Map<String, dynamic>.from(response['data'] ?? response);
+  }
+
+  /// Chủ quán tiếp quản giao hàng (POST /orders/:id/takeover-delivery)
+  Future<Map<String, dynamic>> takeoverDelivery(String id) async {
+    final response = await _client.post(ApiConfig.orderTakeoverDelivery(id));
+    return Map<String, dynamic>.from(response['data'] ?? response);
+  }
+
+  /// Xác nhận đã giao hàng kèm ảnh POD (khớp DeliverOrderDto)
+  Future<Map<String, dynamic>> deliverOrder(
+    String id, {
+    required String paymentMethod,
+    num? collectedAmount,
+    String? podImageUrl,
+    String? podObjectKey,
+  }) async {
+    final response = await _client.post(
+      ApiConfig.orderDeliver(id),
+      body: {
+        'status': 'DELIVERED',
+        'paymentMethod': paymentMethod,
+        'collectedAmount': ?collectedAmount,
+        if (podImageUrl != null && podImageUrl.trim().isNotEmpty)
+          'podImageUrl': podImageUrl.trim(),
+        if (podObjectKey != null && podObjectKey.trim().isNotEmpty)
+          'podObjectKey': podObjectKey.trim(),
+        'deliveredAt': DateTime.now().toUtc().toIso8601String(),
+      },
+    );
+    return Map<String, dynamic>.from(response['data'] ?? response);
+  }
+
+  /// Ghi nhận giao hàng thất bại (khớp DeliveryFailureDto)
+  Future<Map<String, dynamic>> failDelivery(
+    String id, {
+    required String failureReasonCode,
+    String? failureNote,
+    required String evidenceImageUrl,
+  }) async {
+    final response = await _client.post(
+      ApiConfig.orderFailDelivery(id),
+      body: {
+        'failureReasonCode': failureReasonCode.trim(),
+        if (failureNote != null && failureNote.trim().isNotEmpty)
+          'failureNote': failureNote.trim(),
+        'evidenceImageUrl': evidenceImageUrl.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response['data'] ?? response);
+  }
+
+  /// Lấy URL xem ảnh xác thực giao hàng POD (GET /orders/:id/pod-view)
+  Future<Map<String, dynamic>> getPodViewUrl(String id) async {
+    final response = await _client.get(ApiConfig.orderPodView(id));
+    return Map<String, dynamic>.from(response['data'] ?? response);
   }
 }

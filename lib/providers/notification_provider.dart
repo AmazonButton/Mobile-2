@@ -2,17 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/notification_item.dart';
 import '../models/order_model.dart';
+import '../services/api_client.dart';
 import '../services/notification_service.dart';
+import '../services/notifications_api_service.dart';
 import 'order_provider.dart';
 
 /// Provider for managing in-app notifications, badge count, and persistence.
 class NotificationProvider extends ChangeNotifier {
   static const String _storageKey = 'cached_user_notifications';
+  static final RegExp _serverIdPattern = RegExp(r'^\d+$');
 
+  final NotificationsApiService _apiService;
   List<NotificationItem> _notifications = [];
   bool _isLoading = false;
+  Future<void>? _inFlightRefresh;
 
-  NotificationProvider() {
+  NotificationProvider({NotificationsApiService? apiService})
+      : _apiService = apiService ?? NotificationsApiService() {
     _initHooks();
     loadNotifications();
   }
@@ -85,6 +91,57 @@ class NotificationProvider extends ChangeNotifier {
     }
   }
 
+  /// Đồng bộ trực tiếp danh sách thông báo thực từ Backend (GET /notifications).
+  Future<void> refreshFromServer({int pageSize = 30}) {
+    if (_inFlightRefresh != null) return _inFlightRefresh!;
+    final future = _refreshFromServerImpl(pageSize: pageSize);
+    _inFlightRefresh = future;
+    future.whenComplete(() {
+      if (identical(_inFlightRefresh, future)) {
+        _inFlightRefresh = null;
+      }
+    });
+    return future;
+  }
+
+  Future<void> _refreshFromServerImpl({int pageSize = 30}) async {
+    if (!ApiClient().isAuthenticated) {
+      await loadNotifications();
+      return;
+    }
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final res = await _apiService.getNotifications(
+        page: 1,
+        pageSize: pageSize,
+      );
+      final serverItems = res.items;
+      // Giữ lại các cảnh báo kho cục bộ chưa hết hiệu lực, ưu tiên nguồn server cho lịch sử thông báo
+      final localOnly = _notifications
+          .where((n) => n.type == 'OUT_OF_STOCK' || n.type == 'LOW_STOCK')
+          .toList();
+      final merged = <NotificationItem>[...serverItems];
+      for (final local in localOnly) {
+        if (!merged.any((m) => m.id == local.id)) {
+          merged.add(local);
+        }
+      }
+      merged.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      _notifications = merged.length > 50 ? merged.sublist(0, 50) : merged;
+      await _saveToStorage();
+    } catch (e) {
+      debugPrint('[NotificationProvider] refreshFromServer fallback to cache: $e');
+      if (_notifications.isEmpty) {
+        await loadNotifications();
+        return;
+      }
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   /// Saves current notification list to local SharedPreferences.
   Future<void> _saveToStorage() async {
     try {
@@ -124,7 +181,7 @@ class NotificationProvider extends ChangeNotifier {
     await _saveToStorage();
   }
 
-  /// Marks a specific notification as read.
+  /// Marks a specific notification as read (optimistic + BE sync for server IDs).
   Future<void> markAsRead(String id) async {
     final index = _notifications.indexWhere((n) => n.id == id);
     if (index != -1 && !_notifications[index].isRead) {
@@ -132,9 +189,12 @@ class NotificationProvider extends ChangeNotifier {
       notifyListeners();
       await _saveToStorage();
     }
+    if (_serverIdPattern.hasMatch(id) && ApiClient().isAuthenticated) {
+      await _apiService.markAsRead(id);
+    }
   }
 
-  /// Marks all notifications as read.
+  /// Marks all notifications as read (optimistic + BE sync).
   Future<void> markAllAsRead() async {
     bool hasChanges = false;
     for (int i = 0; i < _notifications.length; i++) {
@@ -146,6 +206,9 @@ class NotificationProvider extends ChangeNotifier {
     if (hasChanges) {
       notifyListeners();
       await _saveToStorage();
+    }
+    if (ApiClient().isAuthenticated) {
+      await _apiService.markAllAsRead();
     }
   }
 

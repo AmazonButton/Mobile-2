@@ -14,7 +14,11 @@ class MockDevicesApiService implements DevicesApiService {
   int getDevicesCalls = 0;
 
   @override
-  Future<List<DeviceModel>> getDevices({String? status, String? search}) async {
+  Future<List<DeviceModel>> getDevices({
+    String? status,
+    String? search,
+    bool includeCustomerUsage = true,
+  }) async {
     getDevicesCalls++;
     if (shouldFail) {
       throw Exception('Không thể kết nối máy chủ');

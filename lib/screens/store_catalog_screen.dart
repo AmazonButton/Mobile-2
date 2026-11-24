@@ -1,13 +1,22 @@
 import 'dart:async';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
-import '../providers/device_provider.dart';
-import 'store_product_assignment.dart';
-import '../widgets/smart_order_tour.dart';
-import '../widgets/sample_a.dart';
-import '../services/products_api_service.dart';
 import '../models/button_product_model.dart';
+import '../models/order_model.dart';
+import '../providers/address_provider.dart';
+import '../providers/device_provider.dart';
+import '../providers/order_provider.dart';
+import '../providers/user_provider.dart';
+import '../services/api_client.dart';
+import '../services/orders_api_service.dart';
+import '../services/products_api_service.dart';
+import '../widgets/sample_a.dart';
+import '../widgets/smart_order_tour.dart';
+import 'orders/widgets/payos_qr_payment_sheet.dart';
+import 'store_product_assignment.dart';
 
 class StoreCatalogScreen extends StatefulWidget {
   final Map<String, dynamic> store;
@@ -18,11 +27,398 @@ class StoreCatalogScreen extends StatefulWidget {
 }
 
 class _StoreCatalogScreenState extends State<StoreCatalogScreen> {
+  static final Map<String, ({List<Map<String, dynamic>> rows, DateTime at})>
+      _discountCache = {};
+  static const Duration _discountTtl = Duration(minutes: 5);
+
   late Future<List<Map<String, dynamic>>> _products;
   String _query = '';
   bool _assigning = false;
+  bool _checkingOut = false;
+  final Map<String, int> _cartQty = {};
+  final Map<String, Map<String, dynamic>> _cartItems = {};
   final TextEditingController _searchCtrl = TextEditingController();
   Timer? _debounceTimer;
+
+  int get _totalCartCount => _cartQty.values.fold(0, (a, b) => a + b);
+
+  num _unitPrice(Map<String, dynamic> raw) {
+    final discounted = raw['_discountedPrice'] as num?;
+    if (discounted != null && discounted > 0) return discounted;
+    return num.tryParse('${raw['basePrice'] ?? raw['price'] ?? 0}') ?? 0;
+  }
+
+  num get _totalCartAmount {
+    num total = 0;
+    for (final entry in _cartQty.entries) {
+      final raw = _cartItems[entry.key];
+      if (raw != null && entry.value > 0) {
+        total += _unitPrice(raw) * entry.value;
+      }
+    }
+    return total;
+  }
+
+  void _addToCart(Map<String, dynamic> raw) {
+    final pid = (raw['productId'] ?? raw['id'] ?? '').toString();
+    if (pid.isEmpty) return;
+    setState(() {
+      _cartItems[pid] = raw;
+      _cartQty[pid] = (_cartQty[pid] ?? 0) + 1;
+    });
+  }
+
+  void _changeCartQty(String pid, int delta) {
+    final next = (_cartQty[pid] ?? 0) + delta;
+    setState(() {
+      if (next <= 0) {
+        _cartQty.remove(pid);
+        _cartItems.remove(pid);
+      } else {
+        _cartQty[pid] = next;
+      }
+    });
+  }
+
+  Future<void> _openCheckoutSheet() async {
+    if (_cartQty.isEmpty || _checkingOut) return;
+    final userProv = context.read<UserProvider?>();
+    final addrProv = context.read<AddressProvider?>();
+    final nameCtrl = TextEditingController(text: userProv?.name ?? '');
+    final phoneCtrl = TextEditingController(text: userProv?.phone ?? '');
+    final addressCtrl = TextEditingController(
+      text: addrProv?.currentAddressDisplay.isNotEmpty == true
+          ? addrProv!.currentAddressDisplay
+          : (userProv?.address ?? ''),
+    );
+    final noteCtrl = TextEditingController();
+    String paymentMethod = 'COD';
+
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final entries = _cartQty.entries
+                .where((e) => e.value > 0 && _cartItems[e.key] != null)
+                .toList();
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                16,
+                20,
+                MediaQuery.of(ctx).viewInsets.bottom + 24,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Giỏ hàng & Đặt mua ngay',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          icon: const Icon(LucideIcons.x, size: 18),
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 16),
+                    for (final entry in entries) ...[
+                      Builder(
+                        builder: (_) {
+                          final raw = _cartItems[entry.key]!;
+                          final title =
+                              (raw['productName'] ?? raw['name'] ?? 'Sản phẩm')
+                                  .toString();
+                          final price = _unitPrice(raw);
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 13.5,
+                                        ),
+                                      ),
+                                      Text(
+                                        _formatVnd(price),
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Color(0xFF2563EB),
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: () {
+                                    _changeCartQty(entry.key, -1);
+                                    if (_cartQty.isEmpty) {
+                                      Navigator.pop(ctx);
+                                    } else {
+                                      setSheetState(() {});
+                                    }
+                                  },
+                                  icon: const Icon(
+                                    LucideIcons.minusCircle,
+                                    size: 18,
+                                  ),
+                                ),
+                                Text(
+                                  '${entry.value}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: () {
+                                    _changeCartQty(entry.key, 1);
+                                    setSheetState(() {});
+                                  },
+                                  icon: const Icon(
+                                    LucideIcons.plusCircle,
+                                    size: 18,
+                                    color: Color(0xFF2563EB),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                    const Divider(height: 16),
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Tên người nhận *',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: phoneCtrl,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Số điện thoại nhận hàng *',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: addressCtrl,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'Địa chỉ giao hàng *',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: noteCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Ghi chú cho cửa hàng (tuỳ chọn)',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Phương thức thanh toán',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Text('Tiền mặt (COD)'),
+                            selected: paymentMethod == 'COD',
+                            onSelected: (_) =>
+                                setSheetState(() => paymentMethod = 'COD'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Text('Chuyển khoản PayOS'),
+                            selected: paymentMethod == 'PAYOS',
+                            onSelected: (_) =>
+                                setSheetState(() => paymentMethod = 'PAYOS'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Tổng tạm tính',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        Text(
+                          _formatVnd(_totalCartAmount),
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF2563EB),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    FilledButton.icon(
+                      onPressed: _checkingOut
+                          ? null
+                          : () async {
+                              final cName = nameCtrl.text.trim();
+                              final cPhone = phoneCtrl.text.trim();
+                              final cAddr = addressCtrl.text.trim();
+                              if (cName.isEmpty ||
+                                  cPhone.isEmpty ||
+                                  cAddr.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    backgroundColor: Color(0xFFDC2626),
+                                    content: Text(
+                                      'Vui lòng nhập đầy đủ tên, SĐT và địa chỉ nhận hàng.',
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+                              setSheetState(() => _checkingOut = true);
+                              setState(() => _checkingOut = true);
+                              try {
+                                final orderItems = _cartQty.entries
+                                    .where((e) => e.value > 0)
+                                    .map(
+                                      (e) => {
+                                        'productId':
+                                            int.tryParse(e.key) ?? e.key,
+                                        'quantity': e.value,
+                                      },
+                                    )
+                                    .toList();
+                                final body = <String, dynamic>{
+                                  'storeId': int.tryParse(_storeId) ?? _storeId,
+                                  'items': orderItems,
+                                  'customerName': cName,
+                                  'customerPhone': cPhone,
+                                  'deliveryAddress': cAddr,
+                                  'paymentMethod': paymentMethod,
+                                  if (noteCtrl.text.trim().isNotEmpty)
+                                    'orderNote': noteCtrl.text.trim(),
+                                };
+                                final res = await OrdersApiService()
+                                    .createStorefrontOrder(body: body);
+                                if (!mounted) return;
+                                final orderData = res['order'] is Map
+                                    ? Map<String, dynamic>.from(
+                                        res['order'] as Map,
+                                      )
+                                    : res;
+                                setState(() {
+                                  _cartQty.clear();
+                                  _cartItems.clear();
+                                });
+                                context.read<OrderProvider?>()?.loadOrders();
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    backgroundColor: Color(0xFF059669),
+                                    content: Text(
+                                      'Đặt hàng trực tiếp thành công!',
+                                    ),
+                                  ),
+                                );
+                                if (paymentMethod == 'PAYOS' &&
+                                    (orderData['orderId'] ?? orderData['id']) !=
+                                        null) {
+                                  await PayosQrPaymentSheet.show(
+                                    context,
+                                    order: OrderModel.fromJson(orderData),
+                                  );
+                                }
+                              } catch (e) {
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    backgroundColor: const Color(0xFFDC2626),
+                                    content: Text(
+                                      e is ApiException
+                                          ? e.message
+                                          : 'Đặt hàng thất bại. Vui lòng thử lại.',
+                                    ),
+                                  ),
+                                );
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _checkingOut = false);
+                                }
+                                if (ctx.mounted) {
+                                  setSheetState(() => _checkingOut = false);
+                                }
+                              }
+                            },
+                      icon: const Icon(LucideIcons.shoppingBag, size: 17),
+                      label: Text(
+                        _checkingOut ? 'Đang gửi đơn...' : 'Xác nhận đặt hàng',
+                      ),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF2563EB),
+                        minimumSize: const Size(double.infinity, 48),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    } finally {
+      nameCtrl.dispose();
+      phoneCtrl.dispose();
+      addressCtrl.dispose();
+      noteCtrl.dispose();
+    }
+  }
 
   String get _storeId =>
       (widget.store['storeId'] ?? widget.store['id']).toString();
@@ -41,11 +437,9 @@ class _StoreCatalogScreenState extends State<StoreCatalogScreen> {
 
   void _onSearchChanged(String value) {
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 250), () {
-      if (mounted) {
-        setState(() => _query = value.trim().toLowerCase());
-      }
-    });
+    if (mounted) {
+      setState(() => _query = value.trim().toLowerCase());
+    }
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
@@ -67,36 +461,56 @@ class _StoreCatalogScreenState extends State<StoreCatalogScreen> {
           .toList();
     }
 
-    // Đồng bộ ưu đãi giảm giá sản phẩm song song (như bản Web)
+    // Đồng bộ ưu đãi giảm giá có cache 5 phút & giới hạn đồng thời tránh bão N+1
     final now = DateTime.now();
-    await Future.wait(
-      products.map((p) async {
-        final pid = (p['productId'] ?? p['id'] ?? '').toString();
-        if (pid.isEmpty) return;
-        final discounts = await ProductsApiService()
-            .getProductDiscounts(pid)
-            .timeout(const Duration(milliseconds: 1200), onTimeout: () => []);
-        for (final d in discounts) {
-          if (d['status'] != 'ACTIVE') continue;
-          final start = DateTime.tryParse(d['startAt']?.toString() ?? '');
-          final end = DateTime.tryParse(d['endAt']?.toString() ?? '');
-          if (start != null && end != null && !now.isBefore(start) && !now.isAfter(end)) {
-            final basePrice = num.tryParse('${p['basePrice'] ?? p['price'] ?? 0}') ?? 0;
-            final pct = num.tryParse('${d['discountPercent'] ?? ''}');
-            final amt = num.tryParse('${d['discountAmount'] ?? ''}');
-            final reduction = pct != null
-                ? (basePrice * pct / 100).round()
-                : (amt ?? 0).round();
-            final finalPrice = (basePrice - reduction).clamp(0, basePrice);
-            if (finalPrice < basePrice) {
-              p['_discountedPrice'] = finalPrice;
-              p['_discountBadge'] = pct != null ? '-${pct.round()}%' : '-${reduction}đ';
-            }
-            break;
+    final discountTargets = products.take(15).toList();
+    const batchSize = 5;
+    for (var i = 0; i < discountTargets.length; i += batchSize) {
+      final slice = discountTargets.skip(i).take(batchSize).toList();
+      await Future.wait(
+        slice.map((p) async {
+          final pid = (p['productId'] ?? p['id'] ?? '').toString();
+          if (pid.isEmpty) return;
+          final cached = _discountCache[pid];
+          List<Map<String, dynamic>> discounts;
+          if (cached != null && now.difference(cached.at) < _discountTtl) {
+            discounts = cached.rows;
+          } else {
+            discounts = await ProductsApiService()
+                .getProductDiscounts(pid)
+                .timeout(
+                  const Duration(milliseconds: 1200),
+                  onTimeout: () => const [],
+                );
+            _discountCache[pid] = (rows: discounts, at: now);
           }
-        }
-      }),
-    );
+          for (final d in discounts) {
+            if (d['status'] != 'ACTIVE') continue;
+            final start = DateTime.tryParse(d['startAt']?.toString() ?? '');
+            final end = DateTime.tryParse(d['endAt']?.toString() ?? '');
+            if (start != null &&
+                end != null &&
+                !now.isBefore(start) &&
+                !now.isAfter(end)) {
+              final basePrice =
+                  num.tryParse('${p['basePrice'] ?? p['price'] ?? 0}') ?? 0;
+              final pct = num.tryParse('${d['discountPercent'] ?? ''}');
+              final amt = num.tryParse('${d['discountAmount'] ?? ''}');
+              final reduction = pct != null
+                  ? (basePrice * pct / 100).round()
+                  : (amt ?? 0).round();
+              final finalPrice = (basePrice - reduction).clamp(0, basePrice);
+              if (finalPrice < basePrice) {
+                p['_discountedPrice'] = finalPrice;
+                p['_discountBadge'] =
+                    pct != null ? '-${pct.round()}%' : '-$reduction ₫';
+              }
+              break;
+            }
+          }
+        }),
+      );
+    }
 
     return products;
   }
@@ -173,7 +587,73 @@ class _StoreCatalogScreenState extends State<StoreCatalogScreen> {
         ),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
+        actions: [
+          if (_totalCartCount > 0)
+            IconButton(
+              tooltip: 'Giỏ hàng',
+              onPressed: _openCheckoutSheet,
+              icon: Badge(
+                label: Text('$_totalCartCount'),
+                child: const Icon(LucideIcons.shoppingCart),
+              ),
+            ),
+        ],
       ),
+      bottomNavigationBar: _totalCartCount > 0
+          ? SafeArea(
+              top: false,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '$_totalCartCount sản phẩm trong giỏ',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            _formatVnd(_totalCartAmount),
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF2563EB),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    FilledButton.icon(
+                      onPressed: _openCheckoutSheet,
+                      icon: const Icon(LucideIcons.shoppingBag, size: 16),
+                      label: const Text('Đặt mua ngay'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF2563EB),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : null,
       body: AContent(
         maxWidth: SampleA.listWidth,
         child: RefreshIndicator(
@@ -193,12 +673,13 @@ class _StoreCatalogScreenState extends State<StoreCatalogScreen> {
                       (widget.store['coverImageUrl'] ??
                               widget.store['imageUrl']) !=
                           null
-                      ? Image.network(
-                          (widget.store['coverImageUrl'] ??
+                      ? CachedNetworkImage(
+                          imageUrl: (widget.store['coverImageUrl'] ??
                                   widget.store['imageUrl'])
                               .toString(),
                           fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => _storePlaceholder(),
+                          memCacheWidth: 720,
+                          errorWidget: (_, _, _) => _storePlaceholder(),
                         )
                       : _storePlaceholder(),
                 ),
@@ -359,7 +840,7 @@ class _StoreCatalogScreenState extends State<StoreCatalogScreen> {
       if (i > 0 && (s.length - i) % 3 == 0) buf.write('.');
       buf.write(s[i]);
     }
-    return '${buf}đ';
+    return '$bufđ';
   }
 
   Widget _productRow(Map<String, dynamic> raw) {
@@ -415,10 +896,11 @@ class _StoreCatalogScreenState extends State<StoreCatalogScreen> {
                           size: 48,
                           color: SampleA.muted,
                         )
-                      : Image.network(
-                          url,
+                      : CachedNetworkImage(
+                          imageUrl: url,
                           fit: BoxFit.contain,
-                          errorBuilder: (_, _, _) =>
+                          memCacheWidth: 320,
+                          errorWidget: (_, _, _) =>
                               const Icon(Icons.inventory_2_outlined, size: 48),
                         ),
                 ),
@@ -499,19 +981,56 @@ class _StoreCatalogScreenState extends State<StoreCatalogScreen> {
               ),
             ),
           const SizedBox(height: 6),
-          OutlinedButton(
-            onPressed: (_assigning || isOutOfStock) ? null : () => _assign(raw),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: isOutOfStock ? const Color(0xFF94A3B8) : SampleA.primary,
-              side: BorderSide(
-                color: isOutOfStock ? const Color(0xFFCBD5E1) : SampleA.primary,
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(9),
-              ),
-            ),
-            child: Text(isOutOfStock ? 'Tạm hết hàng' : 'Gán vào nút'),
+          Builder(
+            builder: (_) {
+              final pid = (raw['productId'] ?? raw['id'] ?? '').toString();
+              final inCart = _cartQty[pid] ?? 0;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  FilledButton.icon(
+                    onPressed: isOutOfStock ? null : () => _addToCart(raw),
+                    icon: const Icon(LucideIcons.shoppingCart, size: 13),
+                    label: Text(
+                      isOutOfStock
+                          ? 'Hết hàng'
+                          : (inCart > 0 ? 'Thêm ($inCart)' : 'Mua ngay'),
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: SampleA.primary,
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                      minimumSize: const Size(double.infinity, 34),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  OutlinedButton(
+                    onPressed: (_assigning || isOutOfStock) ? null : () => _assign(raw),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor:
+                          isOutOfStock ? const Color(0xFF94A3B8) : SampleA.primary,
+                      side: BorderSide(
+                        color: isOutOfStock
+                            ? const Color(0xFFCBD5E1)
+                            : SampleA.primary,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                      minimumSize: const Size(double.infinity, 32),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                    ),
+                    child: Text(
+                      isOutOfStock ? 'Tạm hết hàng' : 'Gán vào nút',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ],
       ),

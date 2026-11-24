@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -80,10 +81,19 @@ class DeviceCard extends StatelessWidget {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(13),
                     child: imageUrl != null && imageUrl!.trim().isNotEmpty
-                        ? Image.network(
-                            imageUrl!.trim(),
+                        ? CachedNetworkImage(
+                            imageUrl: imageUrl!.trim(),
                             fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => Center(
+                            memCacheWidth: 140,
+                            memCacheHeight: 140,
+                            placeholder: (_, _) => Center(
+                              child: Icon(
+                                unassigned ? LucideIcons.radio : LucideIcons.packageCheck,
+                                size: 24,
+                                color: unassigned ? const Color(0xFF64748B) : const Color(0xFF2563EB),
+                              ),
+                            ),
+                            errorWidget: (_, _, _) => Center(
                               child: Icon(
                                 unassigned ? LucideIcons.radio : LucideIcons.packageCheck,
                                 size: 24,

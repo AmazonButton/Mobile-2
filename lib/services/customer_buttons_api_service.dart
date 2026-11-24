@@ -77,4 +77,32 @@ class CustomerButtonsApiService {
     }
     return Map<String, dynamic>.from(data);
   }
+
+  /// Lấy chi tiết hợp đồng thuê (GET /rentals/:id)
+  Future<Map<String, dynamic>> getRentalDetail(String contractId) async {
+    final response = await _client.get(
+      ApiConfig.rentalDetail(Uri.encodeComponent(contractId)),
+    );
+    final data = response['data'] ?? response;
+    return data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+  }
+
+  /// Gia hạn hợp đồng thuê nút IoT (POST /rentals/:id/extensions + X-Idempotency-Key)
+  Future<Map<String, dynamic>> extendRental({
+    required String contractId,
+    required int additionalMonths,
+    String? idempotencyKey,
+  }) async {
+    final safeMonths = additionalMonths.clamp(1, 24);
+    final key =
+        idempotencyKey ??
+        'ext_rnt_${contractId}_${DateTime.now().microsecondsSinceEpoch}';
+    final response = await _client.post(
+      ApiConfig.rentalExtensions(Uri.encodeComponent(contractId)),
+      headers: {'X-Idempotency-Key': key},
+      body: {'additionalMonths': safeMonths},
+    );
+    final data = response['data'] ?? response;
+    return data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+  }
 }

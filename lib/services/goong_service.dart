@@ -5,12 +5,13 @@ import 'package:http/http.dart' as http;
 class GoongService {
   static const _key = String.fromEnvironment('GOONG_API_KEY');
   static final _cache = <String, (double, double)>{};
+  static final http.Client _http = http.Client();
 
   Future<(double, double)?> geocode(String address) async {
     if (_key.isEmpty || address.trim().isEmpty) return null;
     if (_cache.containsKey(address)) return _cache[address];
     try {
-      final response = await http
+      final response = await _http
           .get(
             Uri.https('rsapi.goong.io', '/Geocode', {
               'address': address,
@@ -20,8 +21,9 @@ class GoongService {
           .timeout(const Duration(seconds: 12));
       if (response.statusCode != 200) return null;
       final data = jsonDecode(response.body);
-      if (data['status'] != 'OK' || (data['results'] as List).isEmpty)
+      if (data['status'] != 'OK' || (data['results'] as List).isEmpty) {
         return null;
+      }
       final location = data['results'][0]['geometry']['location'];
       final point = (
         (location['lat'] as num).toDouble(),

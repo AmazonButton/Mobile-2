@@ -171,6 +171,27 @@ class NotificationSheet extends StatelessWidget {
                           ),
                         ),
                       IconButton(
+                        icon: notifProvider.isLoading
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(
+                                LucideIcons.refreshCw,
+                                size: 18,
+                                color: Color(0xFF64748B),
+                              ),
+                        tooltip: 'Làm mới từ máy chủ',
+                        onPressed: notifProvider.isLoading
+                            ? null
+                            : () {
+                                HapticFeedback.lightImpact();
+                                notifProvider.refreshFromServer();
+                              },
+                        splashRadius: 20,
+                      ),
+                      IconButton(
                         icon: const Icon(
                           LucideIcons.x,
                           size: 20,
@@ -230,7 +251,6 @@ class NotificationSheet extends StatelessWidget {
                   child: notifications.isEmpty
                       ? _buildEmptyState()
                       : ListView.separated(
-                          shrinkWrap: true,
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
                           itemCount: notifications.length,
                           separatorBuilder: (ctx, index) =>

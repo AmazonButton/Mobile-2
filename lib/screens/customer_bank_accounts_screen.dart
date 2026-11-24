@@ -71,6 +71,56 @@ class _CustomerBankAccountsScreenState
     if (mounted) await _reload();
   }
 
+  Future<void> _setDefault(CustomerBankAccount account) async {
+    try {
+      await _api.setDefaultAccount(account.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Đã đặt ${account.bankName} làm tài khoản mặc định.'),
+        ),
+      );
+      await _reload();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFFDC2626),
+          content: Text(_bankError(e)),
+        ),
+      );
+    }
+  }
+
+  Future<void> _deleteAccount(CustomerBankAccount account) async {
+    final ok = await showResidentConfirmation(
+      context,
+      title: 'Xóa tài khoản ngân hàng?',
+      message:
+          'Xóa tài khoản ${account.bankName} (${account.maskedNumber}) khỏi danh sách nhận hoàn cọc?',
+      confirmLabel: 'Xóa tài khoản',
+      cancelLabel: 'Hủy',
+      destructive: true,
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await _api.deleteAccount(account.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đã xóa tài khoản ngân hàng.')),
+      );
+      await _reload();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFFDC2626),
+          content: Text(_bankError(e)),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     widget.tour?.trackRoute(context, TourStep.bankInfo);
@@ -225,6 +275,27 @@ class _CustomerBankAccountsScreenState
                                   : 'Xác minh tài khoản',
                             ),
                           ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            if (!account.isDefault)
+                              OutlinedButton.icon(
+                                onPressed: () => _setDefault(account),
+                                icon: const Icon(Icons.star_outline, size: 16),
+                                label: const Text('Đặt làm mặc định'),
+                              ),
+                            TextButton.icon(
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFFDC2626),
+                              ),
+                              onPressed: () => _deleteAccount(account),
+                              icon: const Icon(Icons.delete_outline, size: 16),
+                              label: const Text('Xóa'),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                   ),

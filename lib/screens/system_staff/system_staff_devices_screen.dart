@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../services/api_client.dart';
@@ -46,10 +47,41 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
   List<Map<String, dynamic>> _products = [];
   bool _loadingTemplates = false;
 
+  Timer? _devicesSearchDebounce;
+  Timer? _unassignedSearchDebounce;
+  int _devicesSeq = 0;
+  int _unassignedSeq = 0;
+
   @override
   void initState() {
     super.initState();
     _loadInitial();
+  }
+
+  @override
+  void dispose() {
+    _devicesSearchDebounce?.cancel();
+    _unassignedSearchDebounce?.cancel();
+    super.dispose();
+  }
+
+  void _onDevicesSearchChanged(String value) {
+    _search = value;
+    _page = 1;
+    _devicesSearchDebounce?.cancel();
+    _devicesSearchDebounce = Timer(
+      const Duration(milliseconds: 350),
+      _loadDevices,
+    );
+  }
+
+  void _onUnassignedSearchChanged(String value) {
+    _unassignedSearch = value;
+    _unassignedSearchDebounce?.cancel();
+    _unassignedSearchDebounce = Timer(
+      const Duration(milliseconds: 350),
+      _loadUnassigned,
+    );
   }
 
   Future<void> _loadInitial() async {
@@ -82,6 +114,7 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
 
   Future<void> _loadDevices() async {
     if (!mounted) return;
+    final seq = ++_devicesSeq;
     setState(() => _loadingDevices = true);
     try {
       final res = await _api.listDevices(
@@ -92,7 +125,7 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
         inventoryState: _inventoryStateFilter,
         allocatedOnly: _allocatedOnly,
       );
-      if (!mounted) return;
+      if (!mounted || seq != _devicesSeq) return;
       setState(() {
         _devices = res.items;
         _totalItems = int.tryParse((res.pagination['totalItems'] ?? res.pagination['total'] ?? res.items.length).toString()) ?? res.items.length;
@@ -100,7 +133,7 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
         _loadingDevices = false;
       });
     } catch (e) {
-      if (mounted) {
+      if (mounted && seq == _devicesSeq) {
         setState(() => _loadingDevices = false);
         _snack(e is ApiException ? e.message : 'Không tải được kho nút.', error: true);
       }
@@ -109,6 +142,7 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
 
   Future<void> _loadUnassigned() async {
     if (!mounted) return;
+    final seq = ++_unassignedSeq;
     setState(() => _loadingUnassigned = true);
     try {
       final res = await _api.listUnassignedDevices(
@@ -116,18 +150,18 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
         pageSize: 40,
         search: _unassignedSearch,
       );
-      if (!mounted) return;
+      if (!mounted || seq != _unassignedSeq) return;
       setState(() {
         _unassigned = res.items;
         _loadingUnassigned = false;
       });
     } catch (e) {
-      if (mounted) {
+      if (mounted && seq == _unassignedSeq) {
         setState(() => _loadingUnassigned = false);
         _snack(e is ApiException ? e.message : 'Không tải được nút chưa cấp phát.', error: true);
       }
     }
-    if (_inspectStoreId.isNotEmpty) {
+    if (mounted && seq == _unassignedSeq && _inspectStoreId.isNotEmpty) {
       await _loadStoreInventory(_inspectStoreId);
     }
   }
@@ -194,37 +228,42 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
   Future<void> _showBatchGenerateDialog() async {
     final prefixCtrl = TextEditingController(text: 'SOB');
     final countCtrl = TextEditingController(text: '10');
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Sinh mã nút theo lô', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: prefixCtrl, decoration: const InputDecoration(labelText: 'Tiền tố (Prefix)')),
-            const SizedBox(height: 10),
-            TextField(
-              controller: countCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Số lượng (1–100)'),
-            ),
+    try {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Sinh mã nút theo lô', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: prefixCtrl, decoration: const InputDecoration(labelText: 'Tiền tố (Prefix)')),
+              const SizedBox(height: 10),
+              TextField(
+                controller: countCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Số lượng (1–100)'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sinh lô')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sinh lô')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      final count = (int.tryParse(countCtrl.text) ?? 10).clamp(1, 100);
-      final res = await _api.batchGenerateDevices(prefix: prefixCtrl.text, count: count);
-      _snack(res['message']?.toString() ?? 'Sinh lô nút thành công!');
-      _loadFleetStats();
-      _subTab == 1 ? _loadUnassigned() : _loadDevices();
-    } catch (e) {
-      _snack(e is ApiException ? e.message : 'Sinh lô thất bại.', error: true);
+      );
+      if (ok != true) return;
+      try {
+        final count = (int.tryParse(countCtrl.text) ?? 10).clamp(1, 100);
+        final res = await _api.batchGenerateDevices(prefix: prefixCtrl.text, count: count);
+        _snack(res['message']?.toString() ?? 'Sinh lô nút thành công!');
+        _loadFleetStats();
+        _subTab == 1 ? _loadUnassigned() : _loadDevices();
+      } catch (e) {
+        _snack(e is ApiException ? e.message : 'Sinh lô thất bại.', error: true);
+      }
+    } finally {
+      prefixCtrl.dispose();
+      countCtrl.dispose();
     }
   }
 
@@ -233,102 +272,112 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
     final nameCtrl = TextEditingController();
     final macCtrl = TextEditingController();
     String selectedStore = '';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Đăng ký nút mới', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: devIdCtrl, decoration: const InputDecoration(labelText: 'Device ID (tuỳ chọn)')),
-                const SizedBox(height: 8),
-                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Tên gợi nhớ')),
-                const SizedBox(height: 8),
-                TextField(controller: macCtrl, decoration: const InputDecoration(labelText: 'MAC Address (tuỳ chọn)')),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  initialValue: selectedStore,
-                  decoration: const InputDecoration(labelText: 'Cửa hàng (tuỳ chọn)'),
-                  items: [
-                    const DropdownMenuItem(value: '', child: Text('Giữ tại kho tổng')),
-                    ..._stores.map((s) {
-                      final id = (s['storeId'] ?? s['id']).toString();
-                      return DropdownMenuItem(value: id, child: Text((s['name'] ?? 'CH #$id').toString(), overflow: TextOverflow.ellipsis));
-                    }),
-                  ],
-                  onChanged: (v) => setLocal(() => selectedStore = v ?? ''),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Đăng ký')),
-          ],
-        ),
-      ),
-    );
-    if (ok != true) return;
     try {
-      final res = await _api.registerDevice({
-        if (devIdCtrl.text.trim().isNotEmpty) 'deviceId': devIdCtrl.text.trim(),
-        if (nameCtrl.text.trim().isNotEmpty) 'customName': nameCtrl.text.trim(),
-        if (macCtrl.text.trim().isNotEmpty) 'macAddress': macCtrl.text.trim(),
-        if (selectedStore.isNotEmpty) 'storeId': selectedStore,
-      });
-      _snack(res['message']?.toString() ?? 'Đăng ký nút thành công!');
-      _loadFleetStats();
-      _loadDevices();
-    } catch (e) {
-      _snack(e is ApiException ? e.message : 'Đăng ký thất bại.', error: true);
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setLocal) => AlertDialog(
+            title: const Text('Đăng ký nút mới', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(controller: devIdCtrl, decoration: const InputDecoration(labelText: 'Device ID (tuỳ chọn)')),
+                  const SizedBox(height: 8),
+                  TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Tên gợi nhớ')),
+                  const SizedBox(height: 8),
+                  TextField(controller: macCtrl, decoration: const InputDecoration(labelText: 'MAC Address (tuỳ chọn)')),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedStore,
+                    decoration: const InputDecoration(labelText: 'Cửa hàng (tuỳ chọn)'),
+                    items: [
+                      const DropdownMenuItem(value: '', child: Text('Giữ tại kho tổng')),
+                      ..._stores.map((s) {
+                        final id = (s['storeId'] ?? s['id']).toString();
+                        return DropdownMenuItem(value: id, child: Text((s['name'] ?? 'CH #$id').toString(), overflow: TextOverflow.ellipsis));
+                      }),
+                    ],
+                    onChanged: (v) => setLocal(() => selectedStore = v ?? ''),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Đăng ký')),
+            ],
+          ),
+        ),
+      );
+      if (ok != true) return;
+      try {
+        final res = await _api.registerDevice({
+          if (devIdCtrl.text.trim().isNotEmpty) 'deviceId': devIdCtrl.text.trim(),
+          if (nameCtrl.text.trim().isNotEmpty) 'customName': nameCtrl.text.trim(),
+          if (macCtrl.text.trim().isNotEmpty) 'macAddress': macCtrl.text.trim(),
+          if (selectedStore.isNotEmpty) 'storeId': selectedStore,
+        });
+        _snack(res['message']?.toString() ?? 'Đăng ký nút thành công!');
+        _loadFleetStats();
+        _loadDevices();
+      } catch (e) {
+        _snack(e is ApiException ? e.message : 'Đăng ký thất bại.', error: true);
+      }
+    } finally {
+      devIdCtrl.dispose();
+      nameCtrl.dispose();
+      macCtrl.dispose();
     }
   }
 
   Future<void> _showBulkImportDialog() async {
     final textCtrl = TextEditingController(text: 'SOB-M-001,SN-M-001,Nút mẫu 1\nSOB-M-002,SN-M-002,Nút mẫu 2');
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Nhập hàng loạt (CSV)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Mỗi dòng: deviceId,serialNumber,customName', style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
-            const SizedBox(height: 8),
-            TextField(controller: textCtrl, maxLines: 5, decoration: const InputDecoration(border: OutlineInputBorder())),
+    try {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Nhập hàng loạt (CSV)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Mỗi dòng: deviceId,serialNumber,customName', style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
+              const SizedBox(height: 8),
+              TextField(controller: textCtrl, maxLines: 5, decoration: const InputDecoration(border: OutlineInputBorder())),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Nhập ngay')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Nhập ngay')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    final rows = textCtrl.text
-        .split('\n')
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty)
-        .map((l) {
-          final p = l.split(',').map((e) => e.trim()).toList();
-          return <String, dynamic>{
-            if (p.isNotEmpty && p[0].isNotEmpty) 'deviceId': p[0],
-            if (p.length > 1 && p[1].isNotEmpty) 'serialNumber': p[1],
-            if (p.length > 2 && p[2].isNotEmpty) 'customName': p[2],
-          };
-        })
-        .toList();
-    if (rows.isEmpty) return;
-    try {
-      final res = await _api.bulkImportDevices(rows: rows);
-      _snack(res['message']?.toString() ?? 'Đã nhập ${rows.length} nút!');
-      _loadFleetStats();
-      _loadDevices();
-    } catch (e) {
-      _snack(e is ApiException ? e.message : 'Nhập hàng loạt thất bại.', error: true);
+      );
+      if (ok != true) return;
+      final rows = textCtrl.text
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l.isNotEmpty)
+          .map((l) {
+            final p = l.split(',').map((e) => e.trim()).toList();
+            return <String, dynamic>{
+              if (p.isNotEmpty && p[0].isNotEmpty) 'deviceId': p[0],
+              if (p.length > 1 && p[1].isNotEmpty) 'serialNumber': p[1],
+              if (p.length > 2 && p[2].isNotEmpty) 'customName': p[2],
+            };
+          })
+          .toList();
+      if (rows.isEmpty) return;
+      try {
+        final res = await _api.bulkImportDevices(rows: rows);
+        _snack(res['message']?.toString() ?? 'Đã nhập ${rows.length} nút!');
+        _loadFleetStats();
+        _loadDevices();
+      } catch (e) {
+        _snack(e is ApiException ? e.message : 'Nhập hàng loạt thất bại.', error: true);
+      }
+    } finally {
+      textCtrl.dispose();
     }
   }
 
@@ -336,48 +385,52 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
     final codeCtrl = TextEditingController();
     Map<String, dynamic>? result;
     String? err;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Tra mã nút', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(controller: codeCtrl, decoration: const InputDecoration(labelText: 'Device ID / PIN 6 số / QR')),
-              const SizedBox(height: 10),
-              if (err != null) Text(err!, style: const TextStyle(color: Color(0xFFDC2626), fontSize: 12)),
-              if (result != null) ...[
-                Text('Device ID: ${result!['deviceId']}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                Text('Trạng thái: ${result!['status']}'),
-                Text('Đã gắn khách: ${result!['isClaimed'] == true ? 'Có' : 'Chưa'}'),
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setLocal) => AlertDialog(
+            title: const Text('Tra mã nút', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(controller: codeCtrl, decoration: const InputDecoration(labelText: 'Device ID / PIN 6 số / QR')),
+                const SizedBox(height: 10),
+                if (err != null) Text(err!, style: const TextStyle(color: Color(0xFFDC2626), fontSize: 12)),
+                if (result != null) ...[
+                  Text('Device ID: ${result!['deviceId']}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                  Text('Trạng thái: ${result!['status']}'),
+                  Text('Đã gắn khách: ${result!['isClaimed'] == true ? 'Có' : 'Chưa'}'),
+                ],
               ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Đóng')),
+              FilledButton(
+                onPressed: () async {
+                  try {
+                    final r = await _api.lookupCode(codeCtrl.text);
+                    setLocal(() {
+                      result = r;
+                      err = null;
+                    });
+                  } catch (e) {
+                    setLocal(() {
+                      result = null;
+                      err = e is ApiException ? e.message : 'Không tìm thấy thiết bị.';
+                    });
+                  }
+                },
+                child: const Text('Tra cứu'),
+              ),
             ],
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Đóng')),
-            FilledButton(
-              onPressed: () async {
-                try {
-                  final r = await _api.lookupCode(codeCtrl.text);
-                  setLocal(() {
-                    result = r;
-                    err = null;
-                  });
-                } catch (e) {
-                  setLocal(() {
-                    result = null;
-                    err = e is ApiException ? e.message : 'Không tìm thấy thiết bị.';
-                  });
-                }
-              },
-              child: const Text('Tra cứu'),
-            ),
-          ],
         ),
-      ),
-    );
+      );
+    } finally {
+      codeCtrl.dispose();
+    }
   }
 
   Future<void> _showAllocateDialog() async {
@@ -461,6 +514,7 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
       statusVal = 'ACTIVE';
     }
 
+    try {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -869,11 +923,45 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
                         try {
                           final tel = await _api.getTelemetry(devId);
                           if (!mounted) return;
-                          final latest = tel.isNotEmpty ? tel.first : null;
-                          _snack(
-                            latest == null
-                                ? 'Chưa có bản ghi telemetry.'
-                                : 'Telemetry: Pin ${latest['batteryLevel'] ?? '--'}% · RSSI ${latest['wifiRSSI'] ?? '--'} dBm · FW ${latest['firmwareVersion'] ?? '--'}',
+                          await showModalBottomSheet<void>(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.white,
+                            shape: const RoundedRectangleBorder(
+                              borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+                            ),
+                            builder: (tCtx) => DraggableScrollableSheet(
+                              expand: false,
+                              initialChildSize: 0.55,
+                              maxChildSize: 0.85,
+                              builder: (_, sc) => ListView(
+                                controller: sc,
+                                padding: const EdgeInsets.all(20),
+                                children: [
+                                  Text(
+                                    'Lịch sử Telemetry: $devId (${tel.length})',
+                                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                                  ),
+                                  const Divider(height: 18),
+                                  if (tel.isEmpty)
+                                    const Text('Chưa có bản ghi telemetry nào.')
+                                  else
+                                    for (final item in tel)
+                                      ListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        leading: const Icon(LucideIcons.activity, size: 18, color: Color(0xFFD97706)),
+                                        title: Text(
+                                          'Pin ${item['batteryLevel'] ?? '--'}% · RSSI ${item['wifiRSSI'] ?? '--'} dBm',
+                                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
+                                        ),
+                                        subtitle: Text(
+                                          'FW ${item['firmwareVersion'] ?? '--'} · ${item['createdAt'] ?? item['recordedAt'] ?? ''}',
+                                          style: const TextStyle(fontSize: 12),
+                                        ),
+                                      ),
+                                ],
+                              ),
+                            ),
                           );
                         } catch (e) {
                           _snack(e is ApiException ? e.message : 'Không tải được telemetry', error: true);
@@ -884,6 +972,66 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF0E7490)),
+                      onPressed: () async {
+                        try {
+                          final logs = await _api.getAuditLogs(devId);
+                          if (!mounted) return;
+                          await showModalBottomSheet<void>(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.white,
+                            shape: const RoundedRectangleBorder(
+                              borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+                            ),
+                            builder: (lCtx) => DraggableScrollableSheet(
+                              expand: false,
+                              initialChildSize: 0.55,
+                              maxChildSize: 0.85,
+                              builder: (_, sc) => ListView(
+                                controller: sc,
+                                padding: const EdgeInsets.all(20),
+                                children: [
+                                  Text(
+                                    'Nhật ký thao tác: $devId (${logs.length})',
+                                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                                  ),
+                                  const Divider(height: 18),
+                                  if (logs.isEmpty)
+                                    const Text('Chưa có nhật ký thao tác nào.')
+                                  else
+                                    for (final log in logs)
+                                      ListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        leading: const Icon(LucideIcons.scrollText, size: 18, color: Color(0xFF0E7490)),
+                                        title: Text(
+                                          (log['action'] ?? log['eventType'] ?? 'EVENT').toString(),
+                                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
+                                        ),
+                                        subtitle: Text(
+                                          '${log['details'] ?? log['description'] ?? ''} · ${log['createdAt'] ?? ''}'.trim(),
+                                          style: const TextStyle(fontSize: 12),
+                                        ),
+                                      ),
+                                ],
+                              ),
+                            ),
+                          );
+                        } catch (e) {
+                          _snack(e is ApiException ? e.message : 'Không tải được nhật ký thiết bị', error: true);
+                        }
+                      },
+                      icon: const Icon(LucideIcons.scrollText, size: 15),
+                      label: const Text('Nhật ký'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
                   Expanded(
                     child: OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFDC2626)),
@@ -927,6 +1075,16 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
         ),
       ),
     );
+    } finally {
+      batteryCtrl.dispose();
+      warrantyCtrl.dispose();
+      wifiSsidCtrl.dispose();
+      wifiPassCtrl.dispose();
+      holdCtrl.dispose();
+      pairCodeCtrl.dispose();
+      assignCustCtrl.dispose();
+      qtyCtrl.dispose();
+    }
   }
 
   Future<void> _showTemplateFormDialog({Map<String, dynamic>? editing}) async {
@@ -940,6 +1098,7 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
       storeId = '';
     }
     String productId = editing?['defaultProductId']?.toString() ?? '';
+    try {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -1030,6 +1189,10 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
     } catch (e) {
       _snack(e is ApiException ? e.message : (isEdit ? 'Cập nhật mẫu thất bại.' : 'Tạo mẫu thất bại.'), error: true);
     }
+    } finally {
+      nameCtrl.dispose();
+      descCtrl.dispose();
+    }
   }
 
   Future<void> _showDeployTemplateDialog(Map<String, dynamic> tmpl) async {
@@ -1041,6 +1204,7 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
     final padCtrl = TextEditingController(text: '6');
     bool useRange = false;
     Map<String, dynamic>? deployRes;
+    try {
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -1156,7 +1320,7 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
                   } else {
                     final start = int.tryParse(startCtrl.text) ?? 1;
                     final end = int.tryParse(endCtrl.text) ?? start;
-                    final pad = (int.tryParse(padCtrl.text) ?? 6).clamp(1, 12);
+                    final pad = (int.tryParse(padCtrl.text) ?? 6).clamp(1, 8);
                     if (end < start || (end - start + 1) > 100) {
                       _snack('Dải mã hợp lệ tối đa 100 thiết bị.', error: true);
                       return;
@@ -1182,6 +1346,13 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
         },
       ),
     );
+    } finally {
+      idsCtrl.dispose();
+      prefixCtrl.dispose();
+      startCtrl.dispose();
+      endCtrl.dispose();
+      padCtrl.dispose();
+    }
   }
 
   @override
@@ -1328,11 +1499,7 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
           ),
           const SizedBox(height: 12),
           TextField(
-            onChanged: (v) {
-              _search = v;
-              _page = 1;
-              _loadDevices();
-            },
+            onChanged: _onDevicesSearchChanged,
             decoration: InputDecoration(
               hintText: 'Tìm mã nút, serial, tên...',
               prefixIcon: const Icon(LucideIcons.search, size: 17),
@@ -1570,10 +1737,7 @@ class _SystemStaffDevicesScreenState extends State<SystemStaffDevicesScreen> {
           ),
           const SizedBox(height: 8),
           TextField(
-            onChanged: (v) {
-              _unassignedSearch = v;
-              _loadUnassigned();
-            },
+            onChanged: _onUnassignedSearchChanged,
             decoration: InputDecoration(
               hintText: 'Tìm nút chưa cấp phát (deviceId, serial)...',
               prefixIcon: const Icon(LucideIcons.search, size: 16),

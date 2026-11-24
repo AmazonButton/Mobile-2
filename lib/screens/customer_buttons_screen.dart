@@ -198,6 +198,161 @@ class _CustomerButtonsScreenState extends State<CustomerButtonsScreen>
     }
   }
 
+  Future<void> _showRentalDetail(CustomerButtonContract contract) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final detail = await _service.getRentalDetail(contract.id);
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (ctx) {
+          final buttons = detail['buttons'] is List ? detail['buttons'] as List : const [];
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Chi tiết hợp đồng ${contract.code}',
+                          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        icon: const Icon(LucideIcons.x, size: 18),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 16),
+                  Text('Trạng thái: ${detail['status'] ?? contract.status}'),
+                  if (detail['startDate'] != null)
+                    Text('Ngày bắt đầu: ${detail['startDate']}'),
+                  if (detail['endDate'] != null)
+                    Text('Ngày hết hạn: ${detail['endDate']}'),
+                  if (detail['monthlyFee'] != null)
+                    Text('Cước hàng tháng: ${CurrencyFormatter.format(_parseNum(detail['monthlyFee']))}'),
+                  Text('Tiền cọc: ${CurrencyFormatter.format(_parseNum(detail['depositAmount'], fallback: contract.depositAmount))}'),
+                  if (buttons.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    const Text('Thiết bị thuộc hợp đồng:', style: TextStyle(fontWeight: FontWeight.w700)),
+                    for (final b in buttons.whereType<Map>())
+                      Text('• ${b['buttonCode'] ?? b['deviceId'] ?? b['id']} (${b['status'] ?? ''})'),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFFDC2626),
+            content: Text(e is ApiException ? e.message : 'Không tải được chi tiết hợp đồng.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _extendContract(CustomerButtonContract contract) async {
+    if (_busy) return;
+    int months = 1;
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: Text(
+            'Gia hạn hợp đồng ${contract.code}',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Chọn số tháng muốn gia hạn thêm (1–24 tháng):'),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [1, 3, 6, 12].map((m) {
+                  return ChoiceChip(
+                    label: Text('$m tháng'),
+                    selected: months == m,
+                    onSelected: (_) => setLocal(() => months = m),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Hủy'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, months),
+              child: const Text('Gia hạn ngay'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      final res = await _service.extendRental(
+        contractId: contract.id,
+        additionalMonths: selected,
+      );
+      if (!mounted) return;
+      final checkoutUrl = res['checkoutUrl']?.toString().trim() ??
+          (res['payment'] is Map ? res['payment']['checkoutUrl']?.toString().trim() : null);
+      if (checkoutUrl != null && checkoutUrl.isNotEmpty) {
+        final uri = Uri.tryParse(checkoutUrl);
+        if (uri != null && await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF16A34A),
+          content: Text('Đã gửi yêu cầu gia hạn thêm $selected tháng thành công!'),
+        ),
+      );
+      await _reloadContractsOnly();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFFDC2626),
+            content: Text(
+              e is ApiException ? e.message : 'Không thể gia hạn hợp đồng. Vui lòng thử lại.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _payDeposit(CustomerButtonContract contract) async {
     if (_busy) return;
     setState(() => _busy = true);
@@ -1384,6 +1539,32 @@ class _CustomerButtonsScreenState extends State<CustomerButtonsScreen>
                                 'Cửa hàng đã nhận lại nút. Khoản hoàn cọc sẽ được chuyển về tài khoản ngân hàng đã xác minh sau khi được duyệt.',
                               ),
                             ],
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: _busy
+                                      ? null
+                                      : () => _showRentalDetail(contract),
+                                  icon: const Icon(LucideIcons.fileText, size: 15),
+                                  label: const Text('Chi tiết'),
+                                ),
+                                if (contract.status == 'ACTIVE' ||
+                                    contract.status == 'EXPIRED')
+                                  FilledButton.icon(
+                                    onPressed: _busy
+                                        ? null
+                                        : () => _extendContract(contract),
+                                    icon: const Icon(LucideIcons.calendarPlus, size: 15),
+                                    label: const Text('Gia hạn thuê'),
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: const Color(0xFF2563EB),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ],
                         ),
                       ),

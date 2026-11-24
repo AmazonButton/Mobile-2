@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -443,6 +442,7 @@ class _AppAnimatedTabBodyState extends State<AppAnimatedTabBody>
   int _activeIndex = 0;
   int? _outgoingIndex;
   int _direction = 1; // +1: moving right (new enters from right), -1: moving left
+  final Set<int> _mountedIndices = <int>{};
 
   @override
   void initState() {
@@ -450,6 +450,7 @@ class _AppAnimatedTabBodyState extends State<AppAnimatedTabBody>
     _activeIndex = widget.children.isEmpty
         ? 0
         : widget.currentIndex.clamp(0, widget.children.length - 1);
+    _mountedIndices.add(_activeIndex);
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 240),
@@ -468,6 +469,7 @@ class _AppAnimatedTabBodyState extends State<AppAnimatedTabBody>
     super.didUpdateWidget(oldWidget);
     if (widget.children.isEmpty) return;
     final nextIndex = widget.currentIndex.clamp(0, widget.children.length - 1);
+    _mountedIndices.add(nextIndex);
     if (nextIndex != _activeIndex) {
       final reduced = MediaQuery.disableAnimationsOf(context);
       _direction = nextIndex > _activeIndex ? 1 : -1;
@@ -493,6 +495,7 @@ class _AppAnimatedTabBodyState extends State<AppAnimatedTabBody>
   Widget build(BuildContext context) {
     if (widget.children.isEmpty) return const SizedBox.shrink();
     final safeActive = _activeIndex.clamp(0, widget.children.length - 1);
+    _mountedIndices.add(safeActive);
     final safeOutgoing = _outgoingIndex != null &&
             _outgoingIndex! >= 0 &&
             _outgoingIndex! < widget.children.length &&
@@ -507,6 +510,9 @@ class _AppAnimatedTabBodyState extends State<AppAnimatedTabBody>
         return Stack(
           fit: StackFit.expand,
           children: List<Widget>.generate(widget.children.length, (i) {
+            if (!_mountedIndices.contains(i)) {
+              return const SizedBox.shrink();
+            }
             final isActive = i == safeActive;
             final isOutgoing = i == safeOutgoing && _controller.isAnimating;
             final visible = isActive || isOutgoing;
@@ -681,7 +687,12 @@ class _HeroSlideDeckState extends State<HeroSlideDeck> {
       return;
     }
     _autoTimer = Timer.periodic(widget.autoPlayInterval, (_) {
-      if (!mounted || _userDragging || !_pageController.hasClients) return;
+      if (!mounted ||
+          _userDragging ||
+          !_pageController.hasClients ||
+          !TickerMode.valuesOf(context).enabled) {
+        return;
+      }
       final next = (_currentIndex + 1) % widget.slides.length;
       _pageController.animateToPage(
         next,
@@ -847,30 +858,27 @@ class AppFloatingNavBar extends StatelessWidget {
         ? 0.0
         : -1.0 + (2.0 * safeSelected / (count - 1));
 
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-        child: Container(
-          padding: EdgeInsets.fromLTRB(
-            8,
-            8,
-            8,
-            bottomPadding > 0 ? bottomPadding : 8,
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        8,
+        8,
+        8,
+        bottomPadding > 0 ? bottomPadding : 8,
+      ),
+      decoration: const BoxDecoration(
+        color: Color(0xFAFFFFFF),
+        border: Border(
+          top: BorderSide(color: Color(0xFFE2E8F0), width: 1),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x0C0F172A),
+            blurRadius: 18,
+            offset: Offset(0, -4),
           ),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.94),
-            border: const Border(
-              top: BorderSide(color: Color(0xFFE2E8F0), width: 1),
-            ),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x0C0F172A),
-                blurRadius: 18,
-                offset: Offset(0, -4),
-              ),
-            ],
-          ),
-          child: LayoutBuilder(
+        ],
+      ),
+      child: LayoutBuilder(
             builder: (context, constraints) {
               final slotWidth = constraints.maxWidth / count;
               final pillWidth = (slotWidth * 0.68).clamp(44.0, 64.0);
@@ -1016,8 +1024,6 @@ class AppFloatingNavBar extends StatelessWidget {
               );
             },
           ),
-        ),
-      ),
     );
   }
 }

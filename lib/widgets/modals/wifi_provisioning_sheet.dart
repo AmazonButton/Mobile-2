@@ -1,12 +1,12 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import '../../services/api_client.dart';
 import '../../services/ble_pairing_bridge.dart';
+import '../../services/provisioning_api_service.dart';
 import '../sample_a.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -185,18 +185,30 @@ class _WifiProvisioningSheetState extends State<WifiProvisioningSheet> {
             }
           }
         }
+      } else if (widget.deviceId != null && widget.deviceId!.trim().isNotEmpty) {
+        // Không có phiên BLE trực tiếp: gửi lệnh đổi Wi-Fi thật lên Backend MQTT/Provisioning API
+        await ProvisioningApiService().changeWifi(
+          deviceId: widget.deviceId!.trim(),
+          ssid: cleanSsid,
+          password: password,
+        );
       } else {
-        await Future.delayed(const Duration(milliseconds: 600));
+        throw StateError(
+          'Chưa xác định được nút bấm hoặc kết nối Bluetooth. Vui lòng ghép nối Bluetooth trước.',
+        );
       }
     } catch (e) {
       if (!mounted) return;
       setState(() => _isConnecting = false);
+      final msg = e is ApiException
+          ? e.message
+          : e.toString().replaceFirst('Bad state: ', '').replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
           backgroundColor: const Color(0xFFDC2626),
           content: Text(
-            'Gửi Wi-Fi qua Bluetooth thất bại: $e',
+            'Cập nhật Wi-Fi thất bại: $msg',
             style: const TextStyle(color: Colors.white, fontSize: 13),
           ),
         ),
@@ -448,7 +460,7 @@ class _WifiProvisioningSheetState extends State<WifiProvisioningSheet> {
                           onTap: _isConnecting ? null : _handleConnect,
                           child: Container(
                             width: double.infinity,
-
+                            height: 52,
                             decoration: BoxDecoration(
                               color: _isConnecting
                                   ? const Color(0xFF3B82F6)
@@ -461,9 +473,13 @@ class _WifiProvisioningSheetState extends State<WifiProvisioningSheet> {
                                       mainAxisAlignment:
                                           MainAxisAlignment.center,
                                       children: [
-                                        CupertinoActivityIndicator(
-                                          color: Colors.white,
-                                          radius: 9,
+                                        SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            color: Colors.white,
+                                            strokeWidth: 2,
+                                          ),
                                         ),
                                         SizedBox(width: 10),
                                         Text(
@@ -501,10 +517,7 @@ class _WifiProvisioningSheetState extends State<WifiProvisioningSheet> {
                           ),
                         ),
                         SizedBox(height: bottomSafeArea > 0 ? 0 : 8),
-                      ]
-                      .animate()
-                      .fade(duration: 250.ms)
-                      .slideY(begin: 0.1, curve: Curves.easeOutQuad),
+                      ],
             ),
           ),
         ),

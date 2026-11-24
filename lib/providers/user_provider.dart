@@ -120,6 +120,7 @@ class UserProvider extends ChangeNotifier {
 
   bool _isLoading = false;
   String? _errorMessage;
+  Future<void>? _inFlightProfile;
 
   UserProvider({
     AuthApiService? authService,
@@ -140,8 +141,15 @@ class UserProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
-  /// Tải thông tin người dùng từ backend
-  Future<void> loadProfile() async {
+  /// Tải thông tin người dùng từ backend (coalesce lời gọi trùng khi khởi động)
+  Future<void> loadProfile({bool force = false}) {
+    if (!force && _inFlightProfile != null) return _inFlightProfile!;
+    final future = _doLoadProfile().whenComplete(() => _inFlightProfile = null);
+    _inFlightProfile = future;
+    return future;
+  }
+
+  Future<void> _doLoadProfile() async {
     final session = _sessionRevision, avatarRevision = _avatarRevision;
     _isLoading = true;
     _errorMessage = null;

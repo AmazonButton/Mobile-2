@@ -27,7 +27,7 @@ class CatalogDevices extends DeviceProvider {
     }),
   ];
   @override
-  Future<void> loadDevices() async {}
+  Future<void> loadDevices({bool includeCustomerUsage = true}) async {}
   @override
   Future<void> updateDeviceProduct(
     String id,
@@ -104,6 +104,8 @@ void main() {
       );
       expect(find.text('1 sản phẩm'), findsOneWidget);
       expect(find.text('Chọn địa chỉ giao hàng'), findsNothing);
+      await tester.ensureVisible(find.text('Gán vào nút'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Gán vào nút'));
       await tester.pumpAndSettle();
       expect(find.text('My button'), findsOneWidget);

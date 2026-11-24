@@ -44,14 +44,25 @@ class DevicesApiService {
   }
 
   /// Lấy danh sách tất cả các nút bấm IoT của người dùng được ánh xạ thành DeviceModel
-  Future<List<DeviceModel>> getDevices({String? status, String? search}) async {
+  Future<List<DeviceModel>> getDevices({
+    String? status,
+    String? search,
+    bool includeCustomerUsage = true,
+  }) async {
     final query = <String, dynamic>{};
     if (status != null && status.isNotEmpty) query['status'] = status;
     if (search != null && search.isNotEmpty) query['search'] = search;
 
     final data = await getAllApiPages(ApiConfig.devices, query: query);
     {
-      final usage = data.any((item) => item['buttonId'] != null)
+      final needsUsage =
+          includeCustomerUsage &&
+          data.any(
+            (item) =>
+                item['buttonId'] != null &&
+                (item['canOrder'] is! bool || item['rentalId'] == null),
+          );
+      final usage = needsUsage
           ? await _usageByButton()
           : <String, CustomerButtonContract>{};
       final devices = data
@@ -85,10 +96,13 @@ class DevicesApiService {
   }
 
   /// Lấy thông tin chi tiết một nút bấm
-  Future<Map<String, dynamic>> getDeviceById(String id) async {
+  Future<Map<String, dynamic>> getDeviceById(
+    String id, {
+    bool includeCustomerUsage = true,
+  }) async {
     final response = await _client.get(ApiConfig.deviceDetail(id));
     final data = Map<String, dynamic>.from(response['data'] ?? response);
-    if (data['buttonId'] == null) return data;
+    if (!includeCustomerUsage || data['buttonId'] == null) return data;
     if (data['canOrder'] is bool && data['rentalId'] != null) return data;
     return _withUsage(data, await _usageByButton());
   }
@@ -113,7 +127,7 @@ class DevicesApiService {
     return response['data'] ?? response;
   }
 
-  /// Khách hàng cập nhật cấu hình nút (tên phòng, đổi sản phẩm gán, số lượng đặt, khóa trẻ em, trạng thái)
+  /// Khách hàng cập nhật cấu hình nút (chỉ gửi các trường được whitelist trong CustomerUpdateConfigDto)
   Future<Map<String, dynamic>> updateCustomerConfig(
     String id, {
     String? buttonName,
@@ -133,10 +147,6 @@ class DevicesApiService {
     if (quantity != null || defaultQuantity != null) {
       body['quantity'] = quantity ?? defaultQuantity;
     }
-    if (isActive != null) body['isActive'] = isActive;
-    if (canOrder != null) body['canOrder'] = canOrder;
-    if (holdDurationMs != null) body['holdDurationMs'] = holdDurationMs;
-    if (roomLocation != null) body['roomLocation'] = roomLocation;
 
     final response = await _client.put(
       ApiConfig.deviceCustomerConfig(id),
@@ -154,22 +164,39 @@ class DevicesApiService {
     return response['data'] ?? response;
   }
 
-  /// Giả lập nhấn nút từ app để kích hoạt tạo đơn hàng tự động
+  /// Giả lập nhấn nút từ app để kích hoạt tạo đơn hàng tự động (khớp SimulatePressDto.pressType)
   Future<Map<String, dynamic>> simulatePress(
     String id, {
-    String eventType = 'SINGLE_PRESS',
+    String pressType = 'SINGLE_PRESS',
+    String? eventType,
   }) async {
     final response = await _client.post(
       ApiConfig.deviceSimulatePress(id),
-      body: {'eventType': eventType},
+      body: {'pressType': eventType ?? pressType},
     );
     return response;
   }
 
-  /// Lấy số liệu đo kiểm tín hiệu thiết bị (Pin, Wi-Fi RSSI)
-  Future<Map<String, dynamic>> getTelemetry(String id) async {
+  /// Lấy danh sách lịch sử đo kiểm tín hiệu thiết bị (Pin, Wi-Fi RSSI)
+  Future<List<Map<String, dynamic>>> getTelemetryList(String id) async {
     final response = await _client.get(ApiConfig.deviceTelemetry(id));
-    return response['data'] ?? response;
+    final data = response['data'];
+    if (data is List) {
+      return data
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    if (data is Map) {
+      return [Map<String, dynamic>.from(data)];
+    }
+    return const [];
+  }
+
+  /// Lấy bản ghi telemetry mới nhất (an toàn khi BE trả về List)
+  Future<Map<String, dynamic>> getTelemetry(String id) async {
+    final list = await getTelemetryList(id);
+    return list.isNotEmpty ? list.first : const {};
   }
 
   /// Gán sản phẩm của cửa hàng vào nút bấm
@@ -190,12 +217,28 @@ class DevicesApiService {
     await _client.delete(ApiConfig.deviceRemoveProduct(deviceId));
   }
 
-  /// Xóa thiết bị khỏi tài khoản người dùng
+  /// Khách hàng hủy ghép nối nút khỏi tài khoản (POST /devices/:id/unclaim)
+  Future<Map<String, dynamic>> unclaimDevice(String deviceId) async {
+    final response = await _client.post(
+      ApiConfig.deviceUnclaim(Uri.encodeComponent(deviceId)),
+    );
+    return response is Map<String, dynamic>
+        ? response
+        : <String, dynamic>{'data': response};
+  }
+
+  /// Khách hàng tạo phiên chuyển nhượng nút bấm (POST /devices/:id/transfer)
+  Future<Map<String, dynamic>> transferDevice(String deviceId) async {
+    final response = await _client.post(
+      ApiConfig.deviceTransfer(Uri.encodeComponent(deviceId)),
+    );
+    return response is Map<String, dynamic>
+        ? response
+        : <String, dynamic>{'data': response};
+  }
+
+  /// Xóa thiết bị (chỉ dành cho Store Owner / System Staff / Admin)
   Future<void> deleteDevice(String deviceId) async {
-    try {
-      await _client.delete(ApiConfig.deviceDetail(deviceId));
-    } catch (_) {
-      // Best-effort remote deletion
-    }
+    await _client.delete(ApiConfig.deviceDetail(Uri.encodeComponent(deviceId)));
   }
 }

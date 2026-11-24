@@ -307,10 +307,13 @@ class NotificationService {
         orderCode: orderCode,
       );
 
-      // Kích hoạt callback nếu đã có NotificationProvider lắng nghe
-      onNotificationReceived?.call(item);
+      // Nếu có NotificationProvider đang lắng nghe, để provider cập nhật & lưu 1 lần duy nhất
+      if (onNotificationReceived != null) {
+        onNotificationReceived!.call(item);
+        return;
+      }
 
-      // Đồng thời lưu trực tiếp vào local storage
+      // Fallback lưu trực tiếp vào local storage khi app đang ở background/chưa gắn provider
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString('cached_user_notifications');
       List<NotificationItem> list = raw != null && raw.isNotEmpty

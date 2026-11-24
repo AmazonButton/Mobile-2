@@ -1,5 +1,5 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import '../app_motion.dart';
-import '../sample_a.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -158,10 +158,19 @@ class SmartButtonCard extends StatelessWidget {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(13),
                   child: url != null && url.isNotEmpty
-                      ? Image.network(
-                          url,
+                      ? CachedNetworkImage(
+                          imageUrl: url,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => const Center(
+                          memCacheWidth: 140,
+                          memCacheHeight: 140,
+                          placeholder: (_, _) => const Center(
+                            child: Icon(
+                              LucideIcons.packageCheck,
+                              size: 24,
+                              color: Color(0xFF2563EB),
+                            ),
+                          ),
+                          errorWidget: (_, _, _) => const Center(
                             child: Icon(
                               LucideIcons.packageCheck,
                               size: 24,

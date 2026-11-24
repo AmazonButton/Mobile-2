@@ -14,7 +14,11 @@ import 'package:smart_order_button/services/orders_api_service.dart';
 
 class SuccessfulOrdersApi implements OrdersApiService {
   @override
-  Future<Map<String, dynamic>> quickReorder({required String deviceId}) async => {
+  Future<Map<String, dynamic>> quickReorder({
+    required String deviceId,
+    String? addressId,
+    String? idempotencyKey,
+  }) async => {
     'success': true,
     'data': {'order': {'orderId': '101', 'orderCode': 'ORD-101', 'orderStatus': 'PENDING', 'createdAt': DateTime.now().toIso8601String()}},
   };

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -1940,9 +1939,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  late final List<DeviceModel> _fallbackDevices = List.from(
-    DeviceModel.sampleDevices,
-  );
+  final List<DeviceModel> _fallbackDevices = const [];
 
   @override
   void initState() {
@@ -1973,7 +1970,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
       if (!isStaff && !isAdmin) {
         try {
-          Provider.of<DeviceProvider>(context, listen: false).loadDevices();
+          Provider.of<DeviceProvider>(
+            context,
+            listen: false,
+          ).loadDevices(includeCustomerUsage: isCustomer);
         } catch (_) {}
       }
       if (!isStaff) {
@@ -2000,7 +2000,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         Provider.of<NotificationProvider>(
           context,
           listen: false,
-        ).loadNotifications();
+        ).refreshFromServer();
       } catch (_) {}
     });
 
@@ -2238,79 +2238,59 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
 
-            // Frosted Glass Sticky Compact Header on scroll
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: IgnorePointer(
-                ignoring: !_showCompactHeader,
-                child: AnimatedSlide(
-                  offset: _showCompactHeader
-                      ? Offset.zero
-                      : const Offset(0, -1),
-                  duration: AppMotion.uiDuration,
-                  curve: AppMotion.easeOut,
-                  child: AnimatedOpacity(
-                    opacity: _showCompactHeader ? 1.0 : 0.0,
-                    duration: AppMotion.fastDuration,
-                    curve: AppMotion.easeOut,
-                    child: ClipRect(
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                        child: Container(
-                          color: Colors.white.withValues(alpha: 0.92),
-                          child: SafeArea(
-                            bottom: false,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 6,
-                              ),
-                              decoration: const BoxDecoration(
-                                border: Border(
-                                  bottom: BorderSide(color: Color(0xFFE2E8F0)),
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      compactTitle,
-                                      style: TextStyle(
-                                        color: compactColor,
-                                        fontSize: 19,
-                                        fontWeight: FontWeight.w800,
-                                        letterSpacing: -0.4,
-                                      ),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Thông báo',
-                                    onPressed: () =>
-                                        NotificationSheet.show(context),
-                                    icon: Badge(
-                                      isLabelVisible:
-                                          (notifProvider?.unreadCount ?? 0) > 0,
-                                      backgroundColor: const Color(0xFFEF4444),
-                                      child: const Icon(
-                                        Icons.notifications_none_rounded,
-                                        size: 24,
-                                        color: Color(0xFF0F172A),
-                                      ),
-                                    ),
-                                  ),
-                                ],
+            // Lightweight Sticky Compact Header (only mounted when scrolled past hero, no BackdropFilter GPU pass)
+            if (_showCompactHeader)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  color: const Color(0xFAFFFFFF),
+                  child: SafeArea(
+                    bottom: false,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 6,
+                      ),
+                      decoration: const BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(color: Color(0xFFE2E8F0)),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              compactTitle,
+                              style: TextStyle(
+                                color: compactColor,
+                                fontSize: 19,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.4,
                               ),
                             ),
                           ),
-                        ),
+                          IconButton(
+                            tooltip: 'Thông báo',
+                            onPressed: () => NotificationSheet.show(context),
+                            icon: Badge(
+                              isLabelVisible:
+                                  (notifProvider?.unreadCount ?? 0) > 0,
+                              backgroundColor: const Color(0xFFEF4444),
+                              child: const Icon(
+                                Icons.notifications_none_rounded,
+                                size: 24,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
             if (_toastMessage != null)
               HomeFloatingToast(
                 slideAnimation: _toastSlideAnimation,

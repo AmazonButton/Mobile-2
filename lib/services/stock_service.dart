@@ -1,14 +1,19 @@
+import 'dart:async';
 import 'package:flutter/widgets.dart';
 import '../models/product_stock.dart';
 import '../models/device_model.dart';
 import 'products_api_service.dart';
 import 'devices_api_service.dart';
 import 'api_client.dart';
+import 'order_updates.dart';
 
 class StockService extends ChangeNotifier with WidgetsBindingObserver {
   static final StockService instance = StockService._();
+  StreamSubscription<void>? _sessionEndSub;
+
   StockService._() {
     WidgetsBinding.instance.addObserver(this);
+    _sessionEndSub = OrderUpdates.sessionEnds.listen((_) => reset());
   }
   final Map<String, ProductStock?> stocks = {};
   final Map<String, String> _deviceRestrictions = {};
@@ -18,13 +23,23 @@ class StockService extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, DateTime> _lastFetched = {};
   static const Duration _cacheTtl = Duration(seconds: 45);
 
+  void reset() {
+    stocks.clear();
+    _deviceRestrictions.clear();
+    configurations.clear();
+    _pending.clear();
+    _tracked.clear();
+    _lastFetched.clear();
+    notifyListeners();
+  }
+
   ProductStock? stock(String id) => stocks[id];
   void remember(String id, dynamic inventory) {
     stocks[id] = ProductStock.fromJson(inventory);
   }
 
   Future<void> refreshDevice(String id, {bool force = false}) {
-    if (!force) {
+    if (!force && configurations.containsKey(id)) {
       final last = _lastFetched[id];
       if (last != null && DateTime.now().difference(last) < _cacheTtl) {
         return Future.value();
@@ -39,7 +54,10 @@ class StockService extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _refreshDevice(String id) async {
     _tracked.add(id);
     try {
-      final device = await DevicesApiService().getDeviceById(id);
+      final device = await DevicesApiService().getDeviceById(
+        id,
+        includeCustomerUsage: false,
+      );
       final restriction = DeviceModel.fromJson(device).orderRestriction;
       if (restriction == null) {
         _deviceRestrictions.remove(id);
@@ -58,7 +76,6 @@ class StockService extends ChangeNotifier with WidgetsBindingObserver {
           final productId = (item['productId'] ?? item['product']?['productId'])
               ?.toString();
           if (productId == null) return;
-          // Stale-while-revalidate: keep previous cached stock while loading
           try {
             final product = await ProductsApiService().getProductById(
               productId,
@@ -73,7 +90,6 @@ class StockService extends ChangeNotifier with WidgetsBindingObserver {
         }),
       );
     } catch (_) {
-      // Don't wipe configuration if already populated
       if (!configurations.containsKey(id)) {
         configurations.remove(id);
       }
@@ -82,12 +98,24 @@ class StockService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> refreshAll({bool force = false}) async {
-    await Future.wait(_tracked.toList().map((id) => refreshDevice(id, force: force)));
+    if (!ApiClient().isAuthenticated || _tracked.isEmpty) return;
+    await Future.wait(
+      _tracked.toList().map((id) => refreshDevice(id, force: force)),
+    );
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) refreshAll(force: true);
+    if (state == AppLifecycleState.resumed && ApiClient().isAuthenticated) {
+      refreshAll(force: false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _sessionEndSub?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   String? problem(String id) {

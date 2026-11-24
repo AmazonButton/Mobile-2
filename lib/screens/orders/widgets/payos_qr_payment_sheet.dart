@@ -48,7 +48,8 @@ class PayosQrPaymentSheet extends StatefulWidget {
   State<PayosQrPaymentSheet> createState() => _PayosQrPaymentSheetState();
 }
 
-class _PayosQrPaymentSheetState extends State<PayosQrPaymentSheet> {
+class _PayosQrPaymentSheetState extends State<PayosQrPaymentSheet>
+    with WidgetsBindingObserver {
   final PaymentsApiService _paymentsService = PaymentsApiService();
   final String _paymentKey = PaymentsApiService.newPaymentKey();
 
@@ -56,6 +57,7 @@ class _PayosQrPaymentSheetState extends State<PayosQrPaymentSheet> {
   String? _errorMessage;
   PayosPaymentData? _paymentData;
   bool _isSuccess = false;
+  bool _isPaused = false;
 
   Timer? _pollingTimer;
   int _pollingAttempts = 0;
@@ -63,8 +65,17 @@ class _PayosQrPaymentSheetState extends State<PayosQrPaymentSheet> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initRealTimeListener();
     _loadPaymentLink();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _isPaused = state != AppLifecycleState.resumed;
+    if (!_isPaused && !_isSuccess && _paymentData != null) {
+      _pollOnce();
+    }
   }
 
   void _initRealTimeListener() {
@@ -77,37 +88,46 @@ class _PayosQrPaymentSheetState extends State<PayosQrPaymentSheet> {
     };
   }
 
+  Future<void> _pollOnce() async {
+    if (_paymentData == null || _isChecking || _isSuccess || !mounted) return;
+    _isChecking = true;
+    try {
+      final res = await _paymentsService.getPaymentRequestInfo(
+        _paymentData!.orderCode.toString(),
+      );
+      final status = (res['status'] ?? res['data']?['status'] ?? '')
+          .toString()
+          .toUpperCase();
+      if (status == 'PAID') {
+        _pollingTimer?.cancel();
+        markSuccess();
+      }
+    } catch (_) {
+    } finally {
+      _isChecking = false;
+    }
+  }
+
   void _startAutoPolling() {
     _pollingTimer?.cancel();
     _pollingAttempts = 0;
-    // Tự động kiểm tra trạng thái mỗi 3.5 giây tối đa 100 lần (~5.8 phút)
+    // Tự động kiểm tra trạng thái mỗi 3.5 giây khi app foreground (tạm dừng khi sang app ngân hàng)
     _pollingTimer = Timer.periodic(const Duration(milliseconds: 3500), (
       timer,
     ) async {
-      _pollingAttempts++;
       if (_isSuccess || !mounted || _pollingAttempts > 100) {
         timer.cancel();
         return;
       }
-      if (_paymentData != null && !_isChecking) {
-        try {
-          final res = await _paymentsService.getPaymentRequestInfo(
-            _paymentData!.orderCode.toString(),
-          );
-          final status = (res['status'] ?? res['data']?['status'] ?? '')
-              .toString()
-              .toUpperCase();
-          if (status == 'PAID') {
-            timer.cancel();
-            markSuccess();
-          }
-        } catch (_) {}
-      }
+      if (_isPaused) return;
+      _pollingAttempts++;
+      await _pollOnce();
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pollingTimer?.cancel();
     if (NotificationService.onPaymentConfirmed != null) {
       NotificationService.onPaymentConfirmed = null;

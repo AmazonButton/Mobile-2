@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../../widgets/smart_order_tour.dart';
 import '../../store_catalog_screen.dart';
 import 'package:flutter/material.dart';
@@ -20,6 +21,7 @@ class HomeQuickShopShelf extends StatefulWidget {
 
 class _HomeQuickShopShelfState extends State<HomeQuickShopShelf> {
   static List<Map<String, dynamic>>? _cachedStores;
+  static String? _cachedAddressKey;
   static DateTime? _lastFetchTime;
   static const Duration _cacheTtl = Duration(minutes: 3);
 
@@ -34,12 +36,13 @@ class _HomeQuickShopShelfState extends State<HomeQuickShopShelf> {
         '${address?.fullAddress}|${address?.latitude}|${address?.longitude}';
     if (_addressKey == key) return;
     _addressKey = key;
-    _stores = _loadStores();
+    _stores = _loadStores(key);
   }
 
-  Future<List<dynamic>> _loadStores() async {
+  Future<List<dynamic>> _loadStores(String currentAddressKey) async {
     final now = DateTime.now();
     if (_cachedStores != null &&
+        _cachedAddressKey == currentAddressKey &&
         _lastFetchTime != null &&
         now.difference(_lastFetchTime!) < _cacheTtl) {
       return _cachedStores!;
@@ -58,21 +61,11 @@ class _HomeQuickShopShelfState extends State<HomeQuickShopShelf> {
           code.startsWith('STORE-CAT-');
     }
 
-    int storePriority(Map s) {
-      final id = (s['storeId'] ?? s['id'] ?? '').toString();
-      if (id == '1') return 0; // Đại lý Nước & Gas Gia Định
-      if (id == '2') return 1; // Minh Khôi Mart Nhu Yếu Phẩm
-      if (id == '67') return 2; // LêBảoStore
-      if (id == '381') return 3; // PhatShop
-      return 10;
-    }
-
     final stores = (await StoresApiService().getStores())
         .whereType<Map>()
         .where((s) => s['status'] == 'ACTIVE' && !isTestStore(s))
         .map((s) => Map<String, dynamic>.from(s))
-        .toList()
-      ..sort((a, b) => storePriority(a).compareTo(storePriority(b)));
+        .toList();
 
     final goong = GoongService();
     final origin = address?.latitude != null && address?.longitude != null
@@ -113,6 +106,7 @@ class _HomeQuickShopShelfState extends State<HomeQuickShopShelf> {
     }
 
     _cachedStores = stores;
+    _cachedAddressKey = currentAddressKey;
     _lastFetchTime = now;
     return stores;
   }
@@ -123,7 +117,8 @@ class _HomeQuickShopShelfState extends State<HomeQuickShopShelf> {
   }
 
   void _retry() => setState(() {
-    _stores = _loadStores();
+    _cachedStores = null;
+    _stores = _loadStores(_addressKey ?? '');
   });
 
   Future<void> _openStore(Map store) async {
@@ -313,7 +308,7 @@ class _StoreCard extends StatelessWidget {
         border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.025),
+            color: Colors.black.withValues(alpha: 0.025),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -348,10 +343,12 @@ class _StoreCard extends StatelessWidget {
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(15),
                         child: logo != null && logo.isNotEmpty
-                            ? Image.network(
-                                logo,
+                            ? CachedNetworkImage(
+                                imageUrl: logo,
                                 fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => const Center(
+                                memCacheWidth: 160,
+                                memCacheHeight: 160,
+                                errorWidget: (_, _, _) => const Center(
                                   child: Icon(
                                     LucideIcons.store,
                                     size: 28,

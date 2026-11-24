@@ -1,13 +1,19 @@
 import 'dart:async';
-import '../../../services/orders_api_service.dart';
-import '../../../services/order_updates.dart';
-import '../../../models/order_timeline_entry.dart';
-import 'order_server_timeline.dart';
+import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../models/order_model.dart';
+import '../../../models/order_timeline_entry.dart';
+import '../../../services/api_client.dart';
+import '../../../services/media_api_service.dart';
+import '../../../services/order_updates.dart';
+import '../../../services/orders_api_service.dart';
+import '../../../services/payments_api_service.dart';
 import '../../../widgets/sample_a.dart';
 import 'order_card_item.dart';
+import 'order_server_timeline.dart';
 import 'payos_qr_payment_sheet.dart';
 
 class OrderDetailBottomSheet extends StatefulWidget {
@@ -81,14 +87,484 @@ class _OrderDetailBottomSheetState extends State<OrderDetailBottomSheet>
     }
   }
 
+  Future<void> _handleSwitchPaymentMethod() async {
+    if (_advancing) return;
+    final target = _order.isPayos ? 'COD' : 'PAYOS';
+    final label = target == 'PAYOS' ? 'Chuyển khoản PayOS' : 'Tiền mặt (COD)';
+    setState(() => _advancing = true);
+    try {
+      await PaymentsApiService().changeOrderPaymentMethod(
+        orderId: _order.id,
+        paymentMethod: target,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF059669),
+          content: Text('Đã đổi phương thức thanh toán sang $label.'),
+        ),
+      );
+      await _reload();
+      if (mounted && target == 'PAYOS') {
+        await PayosQrPaymentSheet.show(context, order: _order);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFFDC2626),
+            content: Text(
+              e is ApiException
+                  ? e.message
+                  : 'Không thể đổi phương thức thanh toán.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _advancing = false);
+    }
+  }
+
+  Future<void> _handleViewPodPhoto() async {
+    if (_advancing) return;
+    setState(() => _advancing = true);
+    try {
+      final res = await _api.getPodViewUrl(_order.id);
+      final url = (res['url'] ??
+              res['signedUrl'] ??
+              res['podUrl'] ??
+              res['podImageUrl'] ??
+              res['viewUrl'] ??
+              '')
+          .toString()
+          .trim();
+      if (!mounted) return;
+      if (url.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đơn hàng này chưa có ảnh xác thực giao hàng.')),
+        );
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => Dialog(
+          backgroundColor: Colors.black,
+          insetPadding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(left: 14),
+                    child: Text(
+                      'Ảnh xác thực giao hàng (POD)',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(LucideIcons.x, color: Colors.white),
+                  ),
+                ],
+              ),
+              InteractiveViewer(
+                child: CachedNetworkImage(
+                  imageUrl: url,
+                  fit: BoxFit.contain,
+                  height: 360,
+                  placeholder: (_, _) => const SizedBox(
+                    height: 220,
+                    child: Center(
+                      child: CircularProgressIndicator(color: Colors.white),
+                    ),
+                  ),
+                  errorWidget: (_, _, _) => const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text(
+                      'Không tải được ảnh POD.',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFFDC2626),
+            content: Text(
+              e is ApiException
+                  ? e.message
+                  : 'Chưa có ảnh xác thực giao hàng cho đơn này.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _advancing = false);
+    }
+  }
+
   Future<void> _handleStoreAdvance() async {
     final next = _nextAction(_order);
     if (next == null || _advancing || widget.onStoreAdvanceStatus == null) return;
+    if (next.$1 == 'DELIVERED') {
+      await _handleStoreDeliverWithPod();
+      return;
+    }
     setState(() => _advancing = true);
     try {
       await widget.onStoreAdvanceStatus!(_order, next.$1, next.$2);
       await _reload();
     } finally {
+      if (mounted) setState(() => _advancing = false);
+    }
+  }
+
+  Future<void> _handleStoreReject() async {
+    if (_advancing) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Từ chối đơn hàng?', style: TextStyle(fontWeight: FontWeight.w800)),
+        content: Text('Bạn có chắc muốn từ chối đơn ${_order.orderCode}?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Quay lại')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFDC2626)),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Từ chối đơn'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _advancing = true);
+    try {
+      await _api.updateOrderStatus(_order.id, status: 'REJECTED');
+      OrderUpdates.notify(_order.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đã từ chối đơn hàng.')),
+        );
+      }
+      await _reload();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFFDC2626),
+            content: Text(e is ApiException ? e.message : 'Từ chối đơn thất bại.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _advancing = false);
+    }
+  }
+
+  Future<void> _handleStoreDeliverWithPod() async {
+    if (_advancing) return;
+    final amountDigits = _order.price.replaceAll(RegExp(r'[^0-9]'), '');
+    final collectedCtrl = TextEditingController(text: amountDigits);
+    String payMethod = _order.isPayos ? 'PAYOS' : 'COD';
+    String? podUrl;
+    bool uploading = false;
+
+    try {
+      final confirm = await showModalBottomSheet<bool>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setSheet) => Padding(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              16,
+              20,
+              MediaQuery.of(ctx).viewInsets.bottom + 24,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Xác nhận giao hàng (POD)',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: payMethod,
+                    decoration: const InputDecoration(
+                      labelText: 'Hình thức thu tiền',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'COD', child: Text('Tiền mặt (COD)')),
+                      DropdownMenuItem(value: 'PAYOS', child: Text('PayOS')),
+                      DropdownMenuItem(value: 'VIETQR', child: Text('VietQR')),
+                    ],
+                    onChanged: (v) => setSheet(() => payMethod = v ?? 'COD'),
+                  ),
+                  if (payMethod == 'COD') ...[
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: collectedCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Số tiền mặt đã thu (VNĐ)',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: uploading
+                        ? null
+                        : () async {
+                            final picked = await ImagePicker().pickImage(
+                              source: ImageSource.camera,
+                              maxWidth: 1280,
+                              imageQuality: 80,
+                            );
+                            if (picked == null) return;
+                            setSheet(() => uploading = true);
+                            try {
+                              final url = await MediaApiService().uploadImage(
+                                File(picked.path),
+                                folder: 'pod',
+                              );
+                              setSheet(() {
+                                podUrl = url;
+                                uploading = false;
+                              });
+                            } catch (e) {
+                              setSheet(() => uploading = false);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    backgroundColor: const Color(0xFFDC2626),
+                                    content: Text(
+                                      e is ApiException ? e.message : 'Tải ảnh POD thất bại.',
+                                    ),
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                    icon: const Icon(LucideIcons.camera, size: 17),
+                    label: Text(
+                      uploading
+                          ? 'Đang tải ảnh POD...'
+                          : (podUrl == null ? 'Chụp ảnh xác thực giao hàng (POD)' : 'Đã có ảnh POD (chụp lại)'),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: uploading ? null : () => Navigator.pop(ctx, true),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF047857),
+                      minimumSize: const Size(double.infinity, 48),
+                    ),
+                    child: const Text('Hoàn tất giao hàng'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      if (confirm != true || !mounted) return;
+      setState(() => _advancing = true);
+      await _api.deliverOrder(
+        _order.id,
+        paymentMethod: payMethod,
+        collectedAmount: payMethod == 'COD' ? num.tryParse(collectedCtrl.text.trim()) : null,
+        podImageUrl: podUrl,
+      );
+      OrderUpdates.notify(_order.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFF059669),
+            content: Text('Đã hoàn tất giao hàng thành công!'),
+          ),
+        );
+      }
+      await _reload();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFFDC2626),
+            content: Text(e is ApiException ? e.message : 'Xác nhận giao hàng thất bại.'),
+          ),
+        );
+      }
+    } finally {
+      collectedCtrl.dispose();
+      if (mounted) setState(() => _advancing = false);
+    }
+  }
+
+  Future<void> _handleStoreFailDelivery() async {
+    if (_advancing) return;
+    String reasonCode = 'CUSTOMER_UNREACHABLE';
+    final noteCtrl = TextEditingController();
+    String? evidenceUrl;
+    bool uploading = false;
+
+    try {
+      final confirm = await showModalBottomSheet<bool>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setSheet) => Padding(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              16,
+              20,
+              MediaQuery.of(ctx).viewInsets.bottom + 24,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Báo cáo giao hàng thất bại',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: reasonCode,
+                    decoration: const InputDecoration(
+                      labelText: 'Lý do thất bại *',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'CUSTOMER_UNREACHABLE', child: Text('Không liên lạc được khách')),
+                      DropdownMenuItem(value: 'WRONG_ADDRESS', child: Text('Sai địa chỉ giao hàng')),
+                      DropdownMenuItem(value: 'CUSTOMER_REJECTED', child: Text('Khách từ chối nhận')),
+                      DropdownMenuItem(value: 'GOODS_DAMAGED_IN_TRANSIT', child: Text('Hàng hư hại khi giao')),
+                    ],
+                    onChanged: (v) => setSheet(() => reasonCode = v ?? 'CUSTOMER_UNREACHABLE'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: noteCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Ghi chú chi tiết',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: uploading
+                        ? null
+                        : () async {
+                            final picked = await ImagePicker().pickImage(
+                              source: ImageSource.camera,
+                              maxWidth: 1280,
+                              imageQuality: 80,
+                            );
+                            if (picked == null) return;
+                            setSheet(() => uploading = true);
+                            try {
+                              final url = await MediaApiService().uploadImage(
+                                File(picked.path),
+                                folder: 'delivery-failures',
+                              );
+                              setSheet(() {
+                                evidenceUrl = url;
+                                uploading = false;
+                              });
+                            } catch (e) {
+                              setSheet(() => uploading = false);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    backgroundColor: const Color(0xFFDC2626),
+                                    content: Text(
+                                      e is ApiException ? e.message : 'Tải ảnh bằng chứng thất bại.',
+                                    ),
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                    icon: const Icon(LucideIcons.camera, size: 17),
+                    label: Text(
+                      uploading
+                          ? 'Đang tải ảnh...'
+                          : (evidenceUrl == null ? 'Chụp ảnh bằng chứng *' : 'Đã có ảnh bằng chứng'),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFDC2626),
+                      minimumSize: const Size(double.infinity, 48),
+                    ),
+                    onPressed: (uploading || evidenceUrl == null)
+                        ? null
+                        : () => Navigator.pop(ctx, true),
+                    child: const Text('Gửi báo cáo giao thất bại'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      if (confirm != true || evidenceUrl == null || !mounted) return;
+      setState(() => _advancing = true);
+      await _api.failDelivery(
+        _order.id,
+        failureReasonCode: reasonCode,
+        failureNote: noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim(),
+        evidenceImageUrl: evidenceUrl!,
+      );
+      OrderUpdates.notify(_order.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đã ghi nhận giao hàng thất bại.')),
+        );
+      }
+      await _reload();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFFDC2626),
+            content: Text(e is ApiException ? e.message : 'Báo giao thất bại không thành công.'),
+          ),
+        );
+      }
+    } finally {
+      noteCtrl.dispose();
       if (mounted) setState(() => _advancing = false);
     }
   }
@@ -169,6 +645,7 @@ class _OrderDetailBottomSheetState extends State<OrderDetailBottomSheet>
   @override
   Widget build(BuildContext context) {
     final next = widget.isStoreOwner ? _nextAction(_order) : null;
+    final rawSt = _order.rawStatus.toUpperCase();
     return _OrderDetailContent(
       order: _order,
       onReorder: widget.onReorder,
@@ -179,6 +656,24 @@ class _OrderDetailBottomSheetState extends State<OrderDetailBottomSheet>
       advancing: _advancing,
       onAdvanceStatus: next != null && widget.onStoreAdvanceStatus != null
           ? _handleStoreAdvance
+          : null,
+      onStoreReject: widget.isStoreOwner &&
+              (rawSt == 'PENDING' || rawSt == 'CONFIRMED')
+          ? _handleStoreReject
+          : null,
+      onStoreFailDelivery: widget.isStoreOwner && rawSt == 'SHIPPING'
+          ? _handleStoreFailDelivery
+          : null,
+      onSwitchPaymentMethod:
+          !widget.isStoreOwner &&
+              !widget.isAdmin &&
+              !_order.isPaid &&
+              !_order.isCancelled &&
+              !_order.isCompleted
+          ? _handleSwitchPaymentMethod
+          : null,
+      onViewPodPhoto: (rawSt == 'DELIVERED' || rawSt == 'COMPLETED')
+          ? _handleViewPodPhoto
           : null,
       entries: _timeline,
       loading: _loading,
@@ -191,7 +686,13 @@ class _OrderDetailBottomSheetState extends State<OrderDetailBottomSheet>
 
 class _OrderDetailContent extends StatelessWidget {
   final OrderModel order;
-  final VoidCallback? onReorder, onCancel, onAdvanceStatus;
+  final VoidCallback? onReorder,
+      onCancel,
+      onAdvanceStatus,
+      onStoreReject,
+      onStoreFailDelivery,
+      onSwitchPaymentMethod,
+      onViewPodPhoto;
   final bool isStoreOwner, isAdmin, advancing;
   final String? storeActionLabel;
   final List<OrderTimelineEntry> entries;
@@ -207,6 +708,10 @@ class _OrderDetailContent extends StatelessWidget {
     this.storeActionLabel,
     this.advancing = false,
     this.onAdvanceStatus,
+    this.onStoreReject,
+    this.onStoreFailDelivery,
+    this.onSwitchPaymentMethod,
+    this.onViewPodPhoto,
     required this.entries,
     required this.loading,
     this.detailError,
@@ -362,6 +867,24 @@ class _OrderDetailContent extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
               ],
+              if (onStoreFailDelivery != null) ...[
+                AButton(
+                  label: 'Báo giao hàng thất bại',
+                  kind: AButtonKind.danger,
+                  busy: advancing,
+                  onPressed: advancing ? null : onStoreFailDelivery,
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (onStoreReject != null) ...[
+                AButton(
+                  label: 'Từ chối đơn hàng',
+                  kind: AButtonKind.danger,
+                  busy: advancing,
+                  onPressed: advancing ? null : onStoreReject,
+                ),
+                const SizedBox(height: 12),
+              ],
               if (!isStoreOwner && !isAdmin && order.canPay) ...[
                 AButton(
                   label: order.isPayos
@@ -369,6 +892,26 @@ class _OrderDetailContent extends StatelessWidget {
                       : 'Thanh toán trước bằng PayOS',
                   onPressed: () =>
                       PayosQrPaymentSheet.show(context, order: order),
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (onSwitchPaymentMethod != null) ...[
+                AButton(
+                  label: order.isPayos
+                      ? 'Đổi sang thanh toán tiền mặt (COD)'
+                      : 'Đổi sang thanh toán PayOS',
+                  kind: AButtonKind.secondary,
+                  busy: advancing,
+                  onPressed: advancing ? null : onSwitchPaymentMethod,
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (onViewPodPhoto != null) ...[
+                AButton(
+                  label: 'Xem ảnh xác thực giao hàng (POD)',
+                  kind: AButtonKind.secondary,
+                  busy: advancing,
+                  onPressed: advancing ? null : onViewPodPhoto,
                 ),
                 const SizedBox(height: 12),
               ],

@@ -3,6 +3,7 @@ import 'package:smart_order_button/services/auth_api_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:smart_order_button/models/button_product_model.dart';
+import 'package:smart_order_button/models/device_model.dart';
 import 'package:smart_order_button/providers/providers.dart';
 import 'package:smart_order_button/screens/devices_screen.dart';
 
@@ -27,7 +28,9 @@ void main() {
 
   group('Centralized State Architecture & Provider Integration (Story 3.1)', () {
     test('DeviceProvider updates device product and notifies listeners', () {
-      final deviceProvider = DeviceProvider();
+      final deviceProvider = DeviceProvider(
+        initialDevices: DeviceModel.sampleDevices,
+      );
       expect(deviceProvider.devices.first.product, 'Nước Lavie 20L');
 
       const newProduct = ButtonProductModel(
@@ -106,7 +109,9 @@ void main() {
           tester.view.resetDevicePixelRatio();
         });
 
-        final deviceProvider = DeviceProvider();
+        final deviceProvider = DeviceProvider(
+          initialDevices: DeviceModel.sampleDevices,
+        );
         final orderProvider = OrderProvider();
         final userProvider = UserProvider();
 

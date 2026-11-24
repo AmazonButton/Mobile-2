@@ -15,7 +15,7 @@ class MockOrdersApiService implements OrdersApiService {
   String? lastCancelledId;
 
   @override
-  Future<List<OrderModel>> getOrders({String? status}) async {
+  Future<List<OrderModel>> getOrders({String? status, int maxPages = 10}) async {
     getOrdersCalls++;
     if (shouldFail) {
       throw Exception('Không thể kết nối đến máy chủ đơn hàng');

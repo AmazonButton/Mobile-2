@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../services/api_client.dart';
@@ -22,6 +23,8 @@ class _SystemStaffReturnsScreenState extends State<SystemStaffReturnsScreen> {
   bool _loading = true;
   String _status = 'PENDING_RECEIPT';
   String _search = '';
+  Timer? _searchDebounce;
+  int _loadSeq = 0;
 
   @override
   void initState() {
@@ -29,8 +32,21 @@ class _SystemStaffReturnsScreenState extends State<SystemStaffReturnsScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    _search = value;
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 350), _load);
+  }
+
   Future<void> _load() async {
     if (!mounted) return;
+    final seq = ++_loadSeq;
     setState(() => _loading = true);
     try {
       final res = await _api.listReturnRequests(
@@ -39,13 +55,13 @@ class _SystemStaffReturnsScreenState extends State<SystemStaffReturnsScreen> {
         page: 1,
         pageSize: 30,
       );
-      if (!mounted) return;
+      if (!mounted || seq != _loadSeq) return;
       setState(() {
         _items = res.items;
         _loading = false;
       });
     } catch (e) {
-      if (mounted) {
+      if (mounted && seq == _loadSeq) {
         setState(() => _loading = false);
         _snack(e is ApiException ? e.message : 'Không tải được phiếu thu hồi.', error: true);
       }
@@ -68,42 +84,49 @@ class _SystemStaffReturnsScreenState extends State<SystemStaffReturnsScreen> {
     final noteCtrl = TextEditingController(
       text: 'Ngoại quan bình thường, đã nhận lại thiết bị về kho.',
     );
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Xác nhận nhận nút ${row['deviceId'] ?? row['returnCode']}', style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Phiếu: ${row['returnCode']} • HĐ: ${row['rentalCode'] ?? '#${row['rentalId']}'}', style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-            const SizedBox(height: 10),
-            TextField(
-              controller: noteCtrl,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Ghi chú kiểm tra nút',
-                border: OutlineInputBorder(),
+    bool? ok;
+    String noteText = '';
+    try {
+      ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Xác nhận nhận nút ${row['deviceId'] ?? row['returnCode']}', style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Phiếu: ${row['returnCode']} • HĐ: ${row['rentalCode'] ?? '#${row['rentalId']}'}', style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+              const SizedBox(height: 10),
+              TextField(
+                controller: noteCtrl,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Ghi chú kiểm tra nút',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Lưu ý: Yêu cầu hoàn cọc sau khi nhận kho sẽ chuyển PENDING_APPROVAL để Admin phê duyệt tài chính.',
-              style: TextStyle(fontSize: 11.5, color: Color(0xFFB45309)),
-            ),
+              const SizedBox(height: 8),
+              const Text(
+                'Lưu ý: Yêu cầu hoàn cọc sau khi nhận kho sẽ chuyển PENDING_APPROVAL để Admin phê duyệt tài chính.',
+                style: TextStyle(fontSize: 11.5, color: Color(0xFFB45309)),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Xác nhận')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Xác nhận')),
-        ],
-      ),
-    );
+      );
+      noteText = noteCtrl.text.trim();
+    } finally {
+      noteCtrl.dispose();
+    }
     if (ok != true) return;
     try {
       final res = await _api.confirmReturnReceipt(
         returnId,
-        inspectionNote: noteCtrl.text.trim(),
+        inspectionNote: noteText,
       );
       _snack(res['message']?.toString() ?? 'Đã xác nhận tiếp nhận nút trả kho!');
       _load();
@@ -161,10 +184,7 @@ class _SystemStaffReturnsScreenState extends State<SystemStaffReturnsScreen> {
                   children: [
                     Expanded(
                       child: TextField(
-                        onChanged: (v) {
-                          _search = v;
-                          _load();
-                        },
+                        onChanged: _onSearchChanged,
                         decoration: InputDecoration(
                           hintText: 'Tìm mã trả, mã nút...',
                           prefixIcon: const Icon(LucideIcons.search, size: 16),

@@ -124,6 +124,36 @@ class StoresApiService {
     return Map<String, dynamic>.from(response['data'] ?? response);
   }
 
+  /// Danh sách yêu cầu rút tiền của cửa hàng (GET /store/wallet/withdrawals)
+  Future<List<Map<String, dynamic>>> getStoreWithdrawals({
+    int page = 1,
+    int pageSize = 20,
+    String? status,
+  }) async {
+    final query = <String, dynamic>{'page': page, 'pageSize': pageSize};
+    if (status != null && status.isNotEmpty) query['status'] = status;
+    final response = await _client.get(
+      ApiConfig.storeWalletWithdrawals,
+      queryParams: query,
+    );
+    final data = response['data'];
+    if (data is List) {
+      return data
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    return const [];
+  }
+
+  /// Đồng bộ trạng thái chi trả lệnh rút tiền từ PayOS (POST /store/wallet/withdrawals/:id/sync-status)
+  Future<Map<String, dynamic>> syncWithdrawalStatus(String id) async {
+    final response = await _client.post(
+      ApiConfig.storeWalletWithdrawalSync(Uri.encodeComponent(id)),
+    );
+    return Map<String, dynamic>.from(response['data'] ?? response);
+  }
+
   /// Thiết lập tài khoản ngân hàng nhận tiền quyết toán (khớp UpdateBankAccountDto backend)
   Future<Map<String, dynamic>> updateBankAccount({
     required String bankBin,

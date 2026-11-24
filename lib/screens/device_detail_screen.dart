@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/device_provider.dart';
 import '../providers/user_provider.dart';
+import '../services/api_client.dart';
 import '../widgets/devices/device_order_sheet.dart';
 import '../widgets/modals/product_selection_sheet.dart';
 import '../widgets/modals/rename_device_dialog.dart';
@@ -155,6 +156,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     HapticFeedback.lightImpact();
     WifiProvisioningSheet.show(
       context: context,
+      deviceId: widget.deviceId,
       initialSsid: _wifiSsid,
       onConnected: (newSsid) {
         if (!mounted) return;
@@ -167,15 +169,85 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     );
   }
 
-  Future<void> _handleDeleteDevice() async {
+  Future<void> _handleTransferDevice() async {
     final id = widget.deviceId;
     if (id == null || id.isEmpty) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text('Xóa nút này?', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-        content: Text('Bạn có chắc chắn muốn xóa "$_deviceName" khỏi tài khoản không?'),
+        title: const Text(
+          'Chuyển nhượng nút bấm',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+        ),
+        content: Text(
+          'Hủy gắn "$_deviceName" khỏi tài khoản hiện tại và tạo mã ghép nối mới để bàn giao cho người nhận?',
+          style: const TextStyle(fontSize: 13.5, color: Color(0xFF475569)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Xác nhận chuyển'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    try {
+      final res = await context.read<DeviceProvider>().transferDevice(id);
+      if (!mounted) return;
+      final data = res['data'] is Map ? res['data'] as Map : res;
+      final newCode = (data['pairingCode'] ?? data['code'] ?? '').toString().trim();
+      final msg = newCode.isNotEmpty
+          ? 'Đã chuyển nhượng nút! Mã ghép nối mới: $newCode'
+          : (res['message'] ?? 'Đã chuyển nhượng nút bấm thành công!').toString();
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF059669),
+          duration: const Duration(seconds: 5),
+          content: Text(msg),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: const Color(0xFFDC2626),
+            content: Text(
+              e is ApiException
+                  ? e.message
+                  : 'Không thể chuyển nhượng nút bấm. Vui lòng thử lại.',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleDeleteDevice() async {
+    final id = widget.deviceId;
+    if (id == null || id.isEmpty) return;
+    final isCustomer = context.read<UserProvider?>()?.isCustomer ?? true;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text(
+          isCustomer ? 'Gỡ nút này khỏi tài khoản?' : 'Xóa nút này?',
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+        ),
+        content: Text(
+          isCustomer
+              ? 'Bạn có chắc chắn muốn hủy ghép nối "$_deviceName" khỏi tài khoản không?'
+              : 'Bạn có chắc chắn muốn xóa "$_deviceName" khỏi hệ thống không?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -184,22 +256,45 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
-            child: const Text('Xóa nút'),
+            child: Text(isCustomer ? 'Gỡ nút' : 'Xóa nút'),
           ),
         ],
       ),
     );
     if (confirm == true && mounted) {
-      await context.read<DeviceProvider>().removeDevice(id);
-      if (mounted) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Color(0xFF0F172A),
-            content: Text('Đã xóa nút bấm thành công'),
-          ),
+      try {
+        await context.read<DeviceProvider>().removeDevice(
+          id,
+          isCustomer: isCustomer,
         );
+        if (mounted) {
+          Navigator.of(context).pop();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFF0F172A),
+              content: Text(
+                isCustomer
+                    ? 'Đã hủy ghép nối nút bấm thành công'
+                    : 'Đã xóa nút bấm thành công',
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFFDC2626),
+              content: Text(
+                e is ApiException
+                    ? e.message
+                    : 'Không thể gỡ nút bấm. Vui lòng thử lại.',
+              ),
+            ),
+          );
+        }
       }
     }
   }
@@ -361,7 +456,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
+                      color: Colors.black.withValues(alpha: 0.05),
                       blurRadius: 16,
                       offset: const Offset(0, -4),
                     ),
@@ -532,7 +627,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                           border: Border.all(color: const Color(0xFFE2E8F0)),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.02),
+                              color: Colors.black.withValues(alpha: 0.02),
                               blurRadius: 8,
                               offset: const Offset(0, 2),
                             ),
@@ -615,7 +710,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                           border: Border.all(color: const Color(0xFFE2E8F0)),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.02),
+                              color: Colors.black.withValues(alpha: 0.02),
                               blurRadius: 8,
                               offset: const Offset(0, 2),
                             ),
@@ -671,7 +766,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                           border: Border.all(color: const Color(0xFFE2E8F0)),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.03),
+                              color: Colors.black.withValues(alpha: 0.03),
                               blurRadius: 12,
                               offset: const Offset(0, 4),
                             ),
@@ -863,7 +958,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                           border: Border.all(color: const Color(0xFFE2E8F0)),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.02),
+                              color: Colors.black.withValues(alpha: 0.02),
                               blurRadius: 8,
                               offset: const Offset(0, 2),
                             ),
@@ -1040,7 +1135,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                           border: Border.all(color: const Color(0xFFE2E8F0)),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.02),
+                              color: Colors.black.withValues(alpha: 0.02),
                               blurRadius: 8,
                               offset: const Offset(0, 2),
                             ),
@@ -1076,10 +1171,19 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                             ),
                             const Divider(height: 1, indent: 56, color: Color(0xFFF1F5F9)),
                             _SettingsTile(
+                              icon: LucideIcons.arrowLeftRight,
+                              iconColor: const Color(0xFFD97706),
+                              iconBg: const Color(0xFFFFFBEB),
+                              title: 'Chuyển nhượng nút bấm',
+                              subtitle: 'Bàn giao nút cho tài khoản khác',
+                              onTap: _handleTransferDevice,
+                            ),
+                            const Divider(height: 1, indent: 56, color: Color(0xFFF1F5F9)),
+                            _SettingsTile(
                               icon: LucideIcons.trash2,
                               iconColor: const Color(0xFFEF4444),
                               iconBg: const Color(0xFFFEF2F2),
-                              title: 'Xóa nút khỏi tài khoản',
+                              title: 'Gỡ nút khỏi tài khoản',
                               subtitle: 'Hủy liên kết nút bấm này',
                               onTap: _handleDeleteDevice,
                             ),

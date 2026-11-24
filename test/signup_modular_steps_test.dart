@@ -142,7 +142,7 @@ void main() {
     });
 
     testWidgets(
-      'StepWifiSetupView renders 2.4GHz and 5GHz network items and reacts to tap',
+      'StepWifiSetupView renders 2.4GHz warning and blocks 5GHz manual SSID',
       (tester) async {
         tester.view.physicalSize = const Size(390 * 3, 844 * 3);
         tester.view.devicePixelRatio = 3.0;
@@ -154,11 +154,12 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.text('Chọn WiFi cho thiết bị'), findsOneWidget);
-        expect(find.text('Nhà Minh'), findsOneWidget);
-        expect(find.text('Nhà Minh_5G'), findsOneWidget);
+        expect(find.byType(TextField), findsOneWidget);
 
-        // Tap 5GHz network should display SnackBar warning
-        await tester.tap(find.text('Nhà Minh_5G'));
+        // Entering a 5GHz network SSID and tapping Continue shows 2.4GHz warning
+        await tester.enterText(find.byType(TextField), 'Home_5G');
+        await tester.pump();
+        await tester.tap(find.text('Tiếp tục'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
 

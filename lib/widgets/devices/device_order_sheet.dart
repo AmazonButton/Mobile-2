@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../models/device_model.dart';
 import '../../models/order_model.dart';
+import '../../providers/address_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/api_client.dart';
@@ -14,7 +15,12 @@ Future<void> showDeviceOrderSheet(
   DeviceModel device,
 ) async {
   final provider = context.read<OrderProvider?>();
-  final address = context.read<UserProvider?>()?.address;
+  final addressProv = context.read<AddressProvider?>();
+  final selectedAddress = addressProv?.selectedAddress;
+  final address =
+      selectedAddress?.fullAddress.trim().isNotEmpty == true
+          ? selectedAddress!.fullAddress
+          : context.read<UserProvider?>()?.address;
   final order = await showModalBottomSheet<OrderModel>(
     context: context,
     isScrollControlled: true,
@@ -26,6 +32,7 @@ Future<void> showDeviceOrderSheet(
       device: device,
       provider: provider,
       address: address,
+      addressId: selectedAddress?.id,
     ),
   );
   if (!context.mounted || order == null) return;
@@ -53,10 +60,12 @@ class _DeviceOrderConfirmation extends StatefulWidget {
   final DeviceModel device;
   final OrderProvider? provider;
   final String? address;
+  final String? addressId;
   const _DeviceOrderConfirmation({
     required this.device,
     this.provider,
     this.address,
+    this.addressId,
   });
   @override
   State<_DeviceOrderConfirmation> createState() =>
@@ -82,6 +91,8 @@ class _DeviceOrderConfirmationState extends State<_DeviceOrderConfirmation> {
         buttonName: widget.device.name,
         productName: widget.device.product,
         productPrice: widget.device.price,
+        apartment: widget.address,
+        addressId: widget.addressId,
       );
       if (order == null) throw StateError('Chưa nhận được xác nhận đơn hàng.');
       if (mounted) Navigator.pop(context, order);

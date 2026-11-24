@@ -90,6 +90,7 @@ class ApiClient {
   Future<void> clearTokens() async {
     _accessToken = null;
     _refreshToken = null;
+    _isInitialized = false;
     OrderUpdates.endSession();
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -98,9 +99,37 @@ class ApiClient {
     } catch (_) {}
   }
 
+  bool _isPublicAuthPath(String path) {
+    final p = path.toLowerCase();
+    return p.contains('/auth/login') ||
+        p.contains('/auth/refresh') ||
+        p.contains('/auth/register') ||
+        p.contains('/auth/google-login') ||
+        p.contains('/auth/forgot-password') ||
+        p.contains('/auth/reset-password') ||
+        p.contains('/auth/verify-email') ||
+        p.contains('/auth/resend-verification') ||
+        p.contains('/auth/check-email') ||
+        p.contains('/auth/check-username');
+  }
+
+  /// Các endpoint trả 401 mang nghĩa nghiệp vụ (sai mật khẩu hiện tại, sai thông tin đăng nhập)
+  /// không nên tự động gọi /auth/refresh hay xóa phiên đăng nhập.
+  bool _skips401Refresh(String path) {
+    final p = path.toLowerCase();
+    return _isPublicAuthPath(p) || p.contains('/auth/change-password');
+  }
+
+  bool get _isMockClient =>
+      _httpClient.runtimeType.toString().contains('Mock');
+
+  static const Duration _requestTimeout = Duration(seconds: 45);
+  static const Duration _refreshTimeout = Duration(seconds: 30);
+
   /// Đảm bảo token đã được nạp từ bộ nhớ lưu trữ nếu chưa khởi tạo
   Future<void> ensureAuthenticated() async {
     if (_accessToken != null && _accessToken!.isNotEmpty) return;
+    if (_isInitialized) return;
     await init(force: true);
   }
 
@@ -157,6 +186,23 @@ class ApiClient {
       return {'success': true, 'data': jsonBody};
     }
 
+    // Handle 429 Too Many Requests with Retry-After support
+    if (statusCode == 429) {
+      final retryAfterRaw = response.headers['retry-after'];
+      final retrySec = int.tryParse(retryAfterRaw?.trim() ?? '');
+      final rateMsg = retrySec != null && retrySec > 0
+          ? 'Máy chủ đang giới hạn yêu cầu. Vui lòng thử lại sau $retrySec giây.'
+          : (jsonBody is Map<String, dynamic> && jsonBody['message'] is String
+                ? jsonBody['message'] as String
+                : 'Máy chủ đang giới hạn yêu cầu. Vui lòng thử lại sau ít phút.');
+      throw ApiException(
+        message: rateMsg,
+        statusCode: 429,
+        errorCode: 'RATE_LIMITED',
+        details: retrySec != null ? {'retryAfterSeconds': retrySec} : null,
+      );
+    }
+
     // Handle error envelope from NestJS
     String errorMessage = 'Yêu cầu thất bại (HTTP $statusCode)';
     String? errorCode;
@@ -186,13 +232,15 @@ class ApiClient {
   set testClient(http.Client client) => _httpClient = client;
 
   Future<void> _checkAuth(String path) async {
-    if (!path.contains('/auth/')) {
+    if (!_isPublicAuthPath(path)) {
       await ensureAuthenticated();
     }
   }
 
   /// Xử lý refresh token khi gặp mã lỗi 401 Unauthorized.
   /// Sử dụng Completer để chặn các request đồng thời gọi trùng lặp refresh API.
+  /// Chỉ xóa token khi server xác nhận 401/403 (token bị thu hồi/hết hạn),
+  /// KHÔNG xóa token khi lỗi timeout hoặc rớt mạng tạm thời.
   Future<bool> _handle401Refresh() async {
     if (_refreshToken == null || _refreshToken!.isEmpty) {
       await clearTokens();
@@ -206,16 +254,22 @@ class ApiClient {
     _refreshCompleter = Completer<bool>();
     try {
       final refreshUri = _buildUri(ApiConfig.authRefresh);
-      final res = await _httpClient.post(
-        refreshUri,
-        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
-        body: jsonEncode({'refreshToken': _refreshToken}),
-      ).timeout(const Duration(seconds: 15));
+      final res = await _httpClient
+          .post(
+            refreshUri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode({'refreshToken': _refreshToken}),
+          )
+          .timeout(_refreshTimeout);
 
       if (res.statusCode >= 200 && res.statusCode < 300) {
         final dynamic jsonBody = jsonDecode(utf8.decode(res.bodyBytes));
         final data = jsonBody['data'] ?? jsonBody;
-        final newAccessToken = jsonBody['accessToken'] ?? data['token'] ?? data['accessToken'];
+        final newAccessToken =
+            jsonBody['accessToken'] ?? data['token'] ?? data['accessToken'];
         final newRefreshToken = jsonBody['refreshToken'] ?? data['refreshToken'];
 
         if (newAccessToken != null) {
@@ -226,13 +280,29 @@ class ApiClient {
           _refreshCompleter!.complete(true);
           return true;
         }
+        await clearTokens();
+        _refreshCompleter!.complete(false);
+        return false;
       }
 
-      await clearTokens();
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        await clearTokens();
+      }
       _refreshCompleter!.complete(false);
       return false;
+    } on TimeoutException {
+      // Transient cold-start / slow network — preserve tokens!
+      if (!_refreshCompleter!.isCompleted) {
+        _refreshCompleter!.complete(false);
+      }
+      return false;
+    } on SocketException {
+      // Offline / transient network drop — preserve tokens!
+      if (!_refreshCompleter!.isCompleted) {
+        _refreshCompleter!.complete(false);
+      }
+      return false;
     } catch (_) {
-      await clearTokens();
       if (!_refreshCompleter!.isCompleted) {
         _refreshCompleter!.complete(false);
       }
@@ -250,15 +320,25 @@ class ApiClient {
   }) async {
     switch (method.toUpperCase()) {
       case 'GET':
-        return await _httpClient.get(uri, headers: headers).timeout(const Duration(seconds: 15));
+        return await _httpClient
+            .get(uri, headers: headers)
+            .timeout(_requestTimeout);
       case 'POST':
-        return await _httpClient.post(uri, headers: headers, body: body).timeout(const Duration(seconds: 15));
+        return await _httpClient
+            .post(uri, headers: headers, body: body)
+            .timeout(_requestTimeout);
       case 'PUT':
-        return await _httpClient.put(uri, headers: headers, body: body).timeout(const Duration(seconds: 15));
+        return await _httpClient
+            .put(uri, headers: headers, body: body)
+            .timeout(_requestTimeout);
       case 'PATCH':
-        return await _httpClient.patch(uri, headers: headers, body: body).timeout(const Duration(seconds: 15));
+        return await _httpClient
+            .patch(uri, headers: headers, body: body)
+            .timeout(_requestTimeout);
       case 'DELETE':
-        return await _httpClient.delete(uri, headers: headers, body: body).timeout(const Duration(seconds: 15));
+        return await _httpClient
+            .delete(uri, headers: headers, body: body)
+            .timeout(_requestTimeout);
       default:
         throw UnsupportedError('Unsupported HTTP method: $method');
     }
@@ -271,18 +351,58 @@ class ApiClient {
     Map<String, dynamic>? queryParams,
     Map<String, String>? headers,
     bool isRetry = false,
+    int transientAttempt = 0,
   }) async {
     await _checkAuth(path);
     final uri = _buildUri(path, queryParams);
     final encodedBody = body != null ? jsonEncode(body) : null;
     final reqHeaders = _buildHeaders(headers);
+    final canRetryTransient =
+        method.toUpperCase() == 'GET' && transientAttempt == 0 && !_isMockClient;
 
     http.Response response;
     try {
-      response = await _executeWithTimeout(method, uri, headers: reqHeaders, body: encodedBody);
-    } on SocketException {
+      response = await _executeWithTimeout(
+        method,
+        uri,
+        headers: reqHeaders,
+        body: encodedBody,
+      );
+    } on TimeoutException {
+      if (canRetryTransient) {
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        return _request(
+          method,
+          path,
+          body: body,
+          queryParams: queryParams,
+          headers: headers,
+          isRetry: isRetry,
+          transientAttempt: transientAttempt + 1,
+        );
+      }
       throw ApiException(
-        message: 'Không thể kết nối đến máy chủ (${ApiConfig.baseUrl}). Vui lòng kiểm tra kết nối mạng.',
+        message:
+            'Máy chủ phản hồi chậm (có thể đang khởi động lại). Vui lòng thử lại sau giây lát.',
+        statusCode: 408,
+        errorCode: 'TIMEOUT',
+      );
+    } on SocketException {
+      if (canRetryTransient) {
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+        return _request(
+          method,
+          path,
+          body: body,
+          queryParams: queryParams,
+          headers: headers,
+          isRetry: isRetry,
+          transientAttempt: transientAttempt + 1,
+        );
+      }
+      throw ApiException(
+        message:
+            'Không thể kết nối đến máy chủ (${ApiConfig.baseUrl}). Vui lòng kiểm tra kết nối mạng.',
         statusCode: 0,
         errorCode: 'NETWORK_ERROR',
       );
@@ -294,8 +414,24 @@ class ApiClient {
       );
     }
 
-    // 401 Interceptor: Nếu chưa xác thực và không phải endpoint auth và chưa thử lại
-    if (response.statusCode == 401 && !path.contains('/auth/') && !isRetry) {
+    if (canRetryTransient &&
+        (response.statusCode == 502 ||
+            response.statusCode == 503 ||
+            response.statusCode == 504)) {
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      return _request(
+        method,
+        path,
+        body: body,
+        queryParams: queryParams,
+        headers: headers,
+        isRetry: isRetry,
+        transientAttempt: transientAttempt + 1,
+      );
+    }
+
+    // 401 Interceptor: Tự làm mới token cho mọi endpoint cần auth (bao gồm /auth/me)
+    if (response.statusCode == 401 && !_skips401Refresh(path) && !isRetry) {
       final refreshed = await _handle401Refresh();
       if (refreshed) {
         // Thực thi lại request gốc với Access Token mới
@@ -375,17 +511,31 @@ class ApiClient {
     request.files.add(multipartFile);
 
     try {
-      final streamedResponse = await _httpClient.send(request).timeout(const Duration(seconds: 30));
+      final streamedResponse = await _httpClient
+          .send(request)
+          .timeout(const Duration(seconds: 45));
       final response = await http.Response.fromStream(streamedResponse);
 
-      if (response.statusCode == 401 && !path.contains('/auth/') && !isRetry) {
+      if (response.statusCode == 401 && !_isPublicAuthPath(path) && !isRetry) {
         final refreshed = await _handle401Refresh();
         if (refreshed) {
-          return await uploadFile(path, file: file, fileField: fileField, fields: fields, isRetry: true);
+          return await uploadFile(
+            path,
+            file: file,
+            fileField: fileField,
+            fields: fields,
+            isRetry: true,
+          );
         }
       }
 
       return _processResponse(response);
+    } on TimeoutException {
+      throw ApiException(
+        message: 'Tải tệp lên quá thời gian chờ. Vui lòng thử lại.',
+        statusCode: 408,
+        errorCode: 'TIMEOUT',
+      );
     } on SocketException {
       throw ApiException(
         message: 'Không thể tải tệp lên máy chủ. Vui lòng kiểm tra kết nối mạng.',

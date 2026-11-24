@@ -265,9 +265,8 @@ class SystemStaffApiService {
       ApiConfig.deviceBehavior(Uri.encodeComponent(id)),
       body: {
         'clickBehavior': clickBehavior,
-        if (doubleClickWindowMs != null)
-          'doubleClickWindowMs': doubleClickWindowMs,
-        if (holdDurationMs != null) 'holdDurationMs': holdDurationMs,
+        'doubleClickWindowMs': ?doubleClickWindowMs,
+        'holdDurationMs': ?holdDurationMs,
       },
     ),
   );

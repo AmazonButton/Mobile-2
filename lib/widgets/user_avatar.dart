@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'sample_a.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -45,10 +46,13 @@ class UserAvatar extends StatelessWidget {
                 errorBuilder: (_, _, _) => fallback,
               )
             : valid
-            ? Image.network(
-                url!,
+            ? CachedNetworkImage(
+                imageUrl: url!,
                 fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => fallback,
+                memCacheWidth: (size * 2).round(),
+                memCacheHeight: (size * 2).round(),
+                placeholder: (_, _) => fallback,
+                errorWidget: (_, _, _) => fallback,
               )
             : fallback,
       ),

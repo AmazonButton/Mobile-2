@@ -48,8 +48,8 @@ class _DevicesScreenState extends State<DevicesScreen> {
     try {
       final orderProvider = context.read<OrderProvider>();
       final userName = context.read<UserProvider?>()?.name ?? 'Khách hàng';
-      final address =
-          context.read<AddressProvider?>()?.currentAddressDisplay ?? '';
+      final addrProv = context.read<AddressProvider?>();
+      final address = addrProv?.currentAddressDisplay ?? '';
       await orderProvider.createOneTouchOrder(
         deviceId: device.id,
         buttonName: device.name,
@@ -57,6 +57,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
         productPrice: device.price,
         customerName: userName,
         apartment: address,
+        addressId: addrProv?.selectedAddress?.id,
       );
       if (!mounted) return;
       HapticFeedback.mediumImpact();
@@ -91,17 +92,29 @@ class _DevicesScreenState extends State<DevicesScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<DeviceProvider?>()?.loadDevices();
+      if (!mounted) return;
+      final isCustomer = context.read<UserProvider?>()?.isCustomer ?? true;
+      context.read<DeviceProvider?>()?.loadDevices(
+        includeCustomerUsage: isCustomer,
+      );
     });
   }
 
   Future<void> _confirmDelete(DeviceModel d) async {
+    final isCustomer = context.read<UserProvider?>()?.isCustomer ?? true;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text('Xóa nút này?', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-        content: Text('Bạn có chắc chắn muốn xóa "${d.name}" khỏi danh sách thiết bị của mình không?'),
+        title: Text(
+          isCustomer ? 'Hủy ghép nối nút này?' : 'Xóa nút này?',
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+        ),
+        content: Text(
+          isCustomer
+              ? 'Bạn có chắc chắn muốn gỡ "${d.name}" khỏi tài khoản của mình không?'
+              : 'Bạn có chắc chắn muốn xóa "${d.name}" khỏi hệ thống không?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -110,21 +123,44 @@ class _DevicesScreenState extends State<DevicesScreen> {
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
-            child: const Text('Xóa nút'),
+            child: Text(isCustomer ? 'Gỡ nút' : 'Xóa nút'),
           ),
         ],
       ),
     );
     if (confirm == true && mounted) {
-      await context.read<DeviceProvider>().removeDevice(d.id);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Color(0xFF0F172A),
-            content: Text('Đã xóa nút bấm thành công'),
-          ),
+      try {
+        await context.read<DeviceProvider>().removeDevice(
+          d.id,
+          isCustomer: isCustomer,
         );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFF0F172A),
+              content: Text(
+                isCustomer
+                    ? 'Đã gỡ nút bấm khỏi tài khoản thành công'
+                    : 'Đã xóa nút bấm thành công',
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFFDC2626),
+              content: Text(
+                e is ApiException
+                    ? e.message
+                    : 'Không thể gỡ nút bấm. Vui lòng thử lại.',
+              ),
+            ),
+          );
+        }
       }
     }
   }
@@ -167,7 +203,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
     final isAdmin = userProv?.isAdmin ?? false;
     final isStoreOwner = userProv?.isStoreOwner ?? false;
     final isCustomer = !isAdmin && !isStoreOwner;
-    final devices = provider?.devices ?? DeviceModel.sampleDevices;
+    final devices = provider?.devices ?? const <DeviceModel>[];
     final loading = provider?.isLoading ?? false;
     return Scaffold(
       backgroundColor: SampleA.background,
@@ -177,7 +213,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
           bottom: false,
           child: RefreshIndicator(
             onRefresh: () async {
-              await provider?.refreshDevices();
+              await provider?.refreshDevices(includeCustomerUsage: isCustomer);
             },
             color: SampleA.primary,
             child: ListView(

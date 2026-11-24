@@ -4,11 +4,13 @@ import '../models/address_prediction.dart';
 import '../models/address_model.dart';
 
 class AddressService {
+  static final http.Client _http = http.Client();
+
   static Future<List<AddressPrediction>> autocomplete(String query) async {
     const key = String.fromEnvironment('GOONG_API_KEY');
     if (key.isEmpty) throw StateError('Chưa cấu hình Goong');
     if (query.trim().length < 2) return [];
-    final response = await http
+    final response = await _http
         .get(
           Uri.https('rsapi.goong.io', '/Place/AutoComplete', {
             'input': query.trim(),
@@ -51,7 +53,7 @@ class AddressService {
     if (key.isEmpty || prediction.placeId.isEmpty) {
       throw StateError('Không thể tải chi tiết địa chỉ');
     }
-    final response = await http
+    final response = await _http
         .get(
           Uri.https('rsapi.goong.io', '/Place/Detail', {
             'place_id': prediction.placeId,

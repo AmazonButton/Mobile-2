@@ -1,3 +1,4 @@
+import '../widgets/app_motion.dart';
 import '../widgets/smart_order_tour.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -99,9 +100,11 @@ class _OrdersScreenState extends State<OrdersScreen>
     _fallback.addListener(_redrawFallback);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
+      _startCountdown();
       final provider = _ordersProvider();
       provider.startLiveUpdates();
       await provider.loadOrders();
+      if (mounted) _startCountdown();
       final id = widget.initialOrderId;
       if (!mounted || id == null || id.isEmpty) return;
       try {
@@ -113,20 +116,37 @@ class _OrdersScreenState extends State<OrdersScreen>
         }
       }
     });
-    _startCountdown();
   }
 
   void _startCountdown() {
     _countdownTimer?.cancel();
+    if (!mounted) return;
+    if (!AppMotion.allowAmbient(context)) return;
+    final initialProvider = _ordersProvider(listen: false);
+    if (!initialProvider.activeOrders.any((o) => o.isEmergencyCancellable)) {
+      return;
+    }
     _cancelCountdown = 60;
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
         timer.cancel();
         return;
       }
+      final provider = _ordersProvider(listen: false);
+      final hasCancellable = provider.activeOrders.any(
+        (o) => o.isEmergencyCancellable,
+      );
+      if (_cancelCountdown <= 0 || !hasCancellable) {
+        timer.cancel();
+        return;
+      }
+      if (!TickerMode.valuesOf(context).enabled) return;
       setState(() {
-        if (_cancelCountdown > 0) _cancelCountdown--;
+        _cancelCountdown--;
       });
+      if (_cancelCountdown <= 0) {
+        timer.cancel();
+      }
     });
   }
 
@@ -241,6 +261,123 @@ class _OrdersScreenState extends State<OrdersScreen>
     }
   }
 
+  Future<void> _showDeliveryQueueSheet(OrderProvider provider) async {
+    List<OrderModel> queue = [];
+    bool loading = true;
+    String? err;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          if (loading) {
+            loading = false;
+            OrdersApiService().getDeliveryQueue().then((rows) {
+              if (ctx.mounted) setSheet(() => queue = rows);
+            }).catchError((e) {
+              if (ctx.mounted) {
+                setSheet(() => err = e is ApiException ? e.message : 'Không tải được hàng đợi giao.');
+              }
+            });
+          }
+          return DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.65,
+            maxChildSize: 0.9,
+            builder: (_, scrollCtrl) => ListView(
+              controller: scrollCtrl,
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Hàng đợi giao hàng',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(LucideIcons.x, size: 18),
+                    ),
+                  ],
+                ),
+                const Divider(height: 16),
+                if (err != null)
+                  Text(err!, style: const TextStyle(color: Color(0xFFDC2626)))
+                else if (queue.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 28),
+                    child: Text(
+                      'Hiện chưa có đơn nào đang chờ nhận giao.',
+                      textAlign: TextAlign.center,
+                      style: SampleA.caption,
+                    ),
+                  )
+                else
+                  for (final item in queue)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.orderCode,
+                                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  item.apartment.isNotEmpty ? item.apartment : item.customerName,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            onPressed: () async {
+                              final oid = item.id;
+                              try {
+                                await OrdersApiService().claimOrder(oid);
+                                _showFloatingToast('Đã nhận đơn giao thành công!');
+                                provider.refreshOrders();
+                                if (ctx.mounted) {
+                                  setSheet(() => queue.removeWhere((x) => x.id == oid));
+                                }
+                              } catch (e) {
+                                _showFloatingToast(
+                                  e is ApiException ? e.message : 'Không thể nhận đơn giao.',
+                                );
+                              }
+                            },
+                            child: const Text('Nhận giao'),
+                          ),
+                        ],
+                      ),
+                    ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   void _showOrderDetail(OrderModel order) {
     final userProv = context.read<UserProvider?>();
     final isStoreOwner = userProv?.isStoreOwner ?? false;
@@ -314,6 +451,12 @@ class _OrdersScreenState extends State<OrdersScreen>
                         ],
                       ),
                     ),
+                    if (isStoreOwner)
+                      AIconButton(
+                        icon: LucideIcons.truck,
+                        tooltip: 'Hàng đợi giao',
+                        onPressed: () => _showDeliveryQueueSheet(provider),
+                      ),
                     AIconButton(
                       icon: LucideIcons.filter,
                       tooltip: 'Lọc đơn hàng',
@@ -583,57 +726,62 @@ class _OrdersScreenState extends State<OrdersScreen>
         onViewHistory: history ? null : () => _tabController.animateTo(1),
       );
     }
-    return ListView(
+    final userProv = context.read<UserProvider?>();
+    final isStoreOwner = userProv?.isStoreOwner ?? false;
+    final isAdmin = userProv?.isAdmin ?? false;
+    final headerCount = history ? 1 : 0;
+    final footerCount = paging.hasMore ? 1 : 0;
+    final totalCount = headerCount + orders.length + footerCount;
+    return ListView.builder(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
       physics: const AlwaysScrollableScrollPhysics(),
-      children: [
-        if (history)
-          const Padding(
+      itemCount: totalCount,
+      itemBuilder: (ctx, index) {
+        if (history && index == 0) {
+          return const Padding(
             padding: EdgeInsets.only(bottom: 12),
             child: Text('Gần đây', style: SampleA.section),
+          );
+        }
+        final orderIndex = index - headerCount;
+        if (orderIndex >= orders.length) {
+          return _loadMoreButton(paging);
+        }
+        final order = orders[orderIndex];
+        final nextAction = isStoreOwner ? _nextStoreAction(order) : null;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: OrderCardItem(
+            key: ValueKey(order.id),
+            order: order,
+            isStoreOwner: isStoreOwner,
+            isAdmin: isAdmin,
+            storeActionLabel: nextAction?.$2,
+            isUpdatingStatus: _updatingOrders.contains(order.id),
+            onAdvanceStatus: nextAction == null
+                ? null
+                : () => _handleStoreAdvanceStatus(
+                      order,
+                      nextAction.$1,
+                      nextAction.$2,
+                    ),
+            cancelCountdown: _cancelCountdown,
+            onEmergencyCancel: (!isStoreOwner && !isAdmin)
+                ? () => _handleEmergencyCancel(order)
+                : null,
+            onCancel: (!isStoreOwner && !isAdmin)
+                ? () => _handleEmergencyCancel(order)
+                : null,
+            onTrack: () => _showOrderDetail(order),
+            onDetailTap: () => _showOrderDetail(order),
+            isReordering: _reordering.contains(order.deviceId),
+            onReorder:
+                (!isStoreOwner && !isAdmin && order.deviceId.isNotEmpty)
+                    ? () => _handleReorder(order)
+                    : null,
           ),
-        for (final order in orders)
-          Builder(
-            builder: (ctx) {
-              final userProv = ctx.watch<UserProvider?>();
-              final isStoreOwner = userProv?.isStoreOwner ?? false;
-              final isAdmin = userProv?.isAdmin ?? false;
-              final nextAction = isStoreOwner ? _nextStoreAction(order) : null;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: OrderCardItem(
-                  key: ValueKey(order.id),
-                  order: order,
-                  isStoreOwner: isStoreOwner,
-                  isAdmin: isAdmin,
-                  storeActionLabel: nextAction?.$2,
-                  isUpdatingStatus: _updatingOrders.contains(order.id),
-                  onAdvanceStatus: nextAction == null
-                      ? null
-                      : () => _handleStoreAdvanceStatus(
-                            order,
-                            nextAction.$1,
-                            nextAction.$2,
-                          ),
-                  cancelCountdown: _cancelCountdown,
-                  onEmergencyCancel: (!isStoreOwner && !isAdmin)
-                      ? () => _handleEmergencyCancel(order)
-                      : null,
-                  onCancel: (!isStoreOwner && !isAdmin)
-                      ? () => _handleEmergencyCancel(order)
-                      : null,
-                  onTrack: () => _showOrderDetail(order),
-                  onDetailTap: () => _showOrderDetail(order),
-                  isReordering: _reordering.contains(order.deviceId),
-                  onReorder: (!isStoreOwner && !isAdmin && order.deviceId.isNotEmpty)
-                      ? () => _handleReorder(order)
-                      : null,
-                ),
-              );
-            },
-          ),
-        if (paging.hasMore) _loadMoreButton(paging),
-      ],
+        );
+      },
     );
   }
 }

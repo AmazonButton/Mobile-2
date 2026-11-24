@@ -89,27 +89,34 @@ class OrderProvider extends ChangeNotifier with WidgetsBindingObserver {
     _loadMoreError = null;
     notifyListeners();
     try {
+      final batches = await Future.wait([
+        for (var page = 1; page <= pages; page++)
+          _apiService.getOrdersPage(
+            page: page,
+            status: status,
+            paymentStatus: payment,
+            fromDate: from,
+            toDate: to,
+          ),
+      ]);
+      if (_disposed || version != _generation) return;
       final loaded = <String, OrderModel>{};
-      for (var page = 1; page <= pages; page++) {
-        final batch = await _apiService.getOrdersPage(
-          page: page,
-          status: status,
-          paymentStatus: payment,
-          fromDate: from,
-          toDate: to,
-        );
-        if (_disposed || version != _generation) return;
+      var lastPage = 1;
+      var hasNext = false;
+      int? total;
+      for (final batch in batches) {
         for (final order in batch.items) {
           loaded[order.id] = order;
         }
-        if (page == pages || !batch.hasNextPage) {
-          _orders = loaded.values.toList();
-          _page = page;
-          _hasMore = batch.hasNextPage;
-          _totalItems = batch.totalItems;
-          break;
-        }
+        lastPage = batch.page;
+        hasNext = batch.hasNextPage;
+        total = batch.totalItems ?? total;
+        if (!batch.hasNextPage) break;
       }
+      _orders = loaded.values.toList();
+      _page = lastPage;
+      _hasMore = hasNext;
+      _totalItems = total;
       onOrdersLoaded?.call(_orders);
     } catch (error) {
       if (!_disposed && version == _generation) {
@@ -276,9 +283,9 @@ class OrderProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Đặt lại đơn hàng siêu tốc qua deviceId
-  Future<void> quickReorder(String deviceId) async {
-    await _apiService.quickReorder(deviceId: deviceId);
+  /// Đặt lại đơn hàng siêu tốc qua deviceId (kèm addressId nếu khách đã chọn)
+  Future<void> quickReorder(String deviceId, {String? addressId}) async {
+    await _apiService.quickReorder(deviceId: deviceId, addressId: addressId);
     await loadOrders();
   }
 
@@ -290,8 +297,12 @@ class OrderProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String productPrice,
     String? customerName,
     String? apartment,
+    String? addressId,
   }) async {
-    final response = await _apiService.quickReorder(deviceId: deviceId);
+    final response = await _apiService.quickReorder(
+      deviceId: deviceId,
+      addressId: addressId,
+    );
     final data = response['data'] ?? response;
     final rawOrder = data is Map ? data['order'] : null;
     if (rawOrder is! Map) {

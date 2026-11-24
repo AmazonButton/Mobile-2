@@ -11,12 +11,13 @@ class DeviceProvider extends ChangeNotifier {
   List<DeviceModel> _devices;
   bool _isLoading = false;
   String? _errorMessage;
+  Future<void>? _inFlightLoad;
 
   DeviceProvider({
     DevicesApiService? apiService,
     List<DeviceModel>? initialDevices,
   }) : _apiService = apiService ?? DevicesApiService(),
-       _devices = initialDevices ?? List.from(DeviceModel.sampleDevices);
+       _devices = initialDevices ?? [];
 
   List<DeviceModel> get devices => List.unmodifiable(_devices);
   bool get isLoading => _isLoading;
@@ -30,32 +31,41 @@ class DeviceProvider extends ChangeNotifier {
     }
   }
 
-  /// Tải danh sách thiết bị từ backend và lọc sạch data rác/trùng lặp ở dưới
-  Future<void> loadDevices() async {
+  /// Tải toàn bộ danh sách thiết bị từ backend (coalesce lời gọi trùng, không ẩn nút chưa gán, không chặn UI chờ N+1 StockService)
+  Future<void> loadDevices({bool includeCustomerUsage = true}) {
+    if (_inFlightLoad != null) return _inFlightLoad!;
+    final future = _doLoadDevices(
+      includeCustomerUsage: includeCustomerUsage,
+    ).whenComplete(() => _inFlightLoad = null);
+    _inFlightLoad = future;
+    return future;
+  }
+
+  Future<void> _doLoadDevices({required bool includeCustomerUsage}) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      final fetched = await _apiService.getDevices();
-      // Lọc sạch data rác/trùng lặp ở dưới: giữ tất cả các nút đã gán sản phẩm,
-      // và chỉ giữ tối đa 1 nút mới chưa gán để người dùng cấu hình
-      final cleaned = <DeviceModel>[];
-      final seenUnassigned = <String>{};
-      for (final d in fetched) {
-        final isUnassigned = d.product == 'Chưa gán sản phẩm' || d.product.trim().isEmpty;
-        if (!isUnassigned) {
-          cleaned.add(d);
-        } else if (seenUnassigned.isEmpty) {
-          cleaned.add(d);
-          seenUnassigned.add(d.id);
+      final fetched = await _apiService.getDevices(
+        includeCustomerUsage: includeCustomerUsage,
+      );
+      _devices = fetched;
+      _errorMessage = null;
+      // Refresh stock lazily in background for customer buttons with products so UI renders immediately
+      if (includeCustomerUsage) {
+        final withProducts = _devices
+            .where((d) => d.productId != null && d.productId!.isNotEmpty)
+            .take(8)
+            .toList();
+        if (withProducts.isNotEmpty) {
+          unawaited(
+            Future.wait(
+              withProducts.map((d) => StockService.instance.refreshDevice(d.id)),
+            ).catchError((_) => const <void>[]),
+          );
         }
       }
-      _devices = cleaned.isNotEmpty ? cleaned : fetched;
-      await Future.wait(
-        _devices.map((d) => StockService.instance.refreshDevice(d.id)),
-      );
-      _errorMessage = null;
     } catch (e) {
       _errorMessage = e.toString();
       // Nếu có lỗi kết nối, giữ lại danh sách thiết bị hiện tại nếu có
@@ -65,13 +75,18 @@ class DeviceProvider extends ChangeNotifier {
     }
   }
 
-  /// Xóa nút bấm khỏi danh sách và gửi yêu cầu xóa lên máy chủ
-  Future<void> removeDevice(String deviceId) async {
+  /// Hủy ghép nối (Customer -> POST /devices/:id/unclaim) hoặc xóa thiết bị (Ops/Store -> DELETE /devices/:id)
+  Future<void> removeDevice(
+    String deviceId, {
+    bool isCustomer = true,
+  }) async {
+    if (isCustomer) {
+      await _apiService.unclaimDevice(deviceId);
+    } else {
+      await _apiService.deleteDevice(deviceId);
+    }
     _devices.removeWhere((d) => d.id == deviceId);
     notifyListeners();
-    try {
-      await _apiService.deleteDevice(deviceId);
-    } catch (_) {}
   }
 
   /// Đổi cửa hàng và nhận lại cấu hình nút đã xóa sản phẩm cũ từ backend.
@@ -111,11 +126,13 @@ class DeviceProvider extends ChangeNotifier {
     unawaited(StockService.instance.refreshDevice(deviceId));
   }
 
-  /// Cập nhật sản phẩm tùy chỉnh (tên & giá) cho nút bấm (dùng cho gợi ý kệ hàng, chọn nhanh)
+  /// Cập nhật sản phẩm tùy chỉnh (gửi kèm productId nếu có để lưu thật trên backend)
   Future<void> updateDeviceProductByName(
     String deviceId,
     String productName,
     String price, {
+    String? productId,
+    int? quantity,
     String? badgeText,
   }) async {
     final index = _devices.indexWhere((d) => d.id == deviceId);
@@ -133,6 +150,7 @@ class DeviceProvider extends ChangeNotifier {
             : '20L');
 
     final updated = current.copyWith(
+      productId: productId ?? current.productId,
       product: productName,
       price: price.endsWith('đ') ? price : '$priceđ',
       badgeText: badge,
@@ -141,13 +159,17 @@ class DeviceProvider extends ChangeNotifier {
     _devices[index] = updated;
     notifyListeners();
 
-    try {
-      await _apiService.updateCustomerConfig(
+    if (productId != null && productId.trim().isNotEmpty) {
+      final response = await _apiService.updateCustomerConfig(
         deviceId,
-        buttonName: current.name,
+        productId: productId.trim(),
+        quantity: quantity ?? current.quantity,
       );
-    } catch (_) {
-      // Best-effort remote update
+      final currentIndex = _devices.indexWhere((d) => d.id == deviceId);
+      if (currentIndex != -1) {
+        _devices[currentIndex] = DeviceModel.fromJson(response);
+        notifyListeners();
+      }
     }
   }
 
@@ -175,7 +197,7 @@ class DeviceProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Cập nhật tên và phòng của nút bấm
+  /// Cập nhật tên nút lên backend (chỉ gửi buttonName vì BE CustomerUpdateConfigDto không có roomLocation)
   Future<void> updateDeviceInfo(
     String deviceId, {
     String? name,
@@ -185,27 +207,34 @@ class DeviceProvider extends ChangeNotifier {
     if (index == -1) return;
 
     final current = _devices[index];
-    final updated = current.copyWith(
-      name: name ?? current.name,
-      room: room ?? current.room,
-    );
-
-    _devices[index] = updated;
-    notifyListeners();
-
-    try {
+    final trimmedName = name?.trim();
+    if (trimmedName != null && trimmedName.isNotEmpty) {
       await _apiService.updateCustomerConfig(
         deviceId,
-        buttonName: name,
-        roomLocation: room,
+        buttonName: trimmedName,
       );
-    } catch (_) {
-      // Best-effort remote update
     }
+
+    final currentIndex = _devices.indexWhere((d) => d.id == deviceId);
+    if (currentIndex == -1) return;
+    _devices[currentIndex] = current.copyWith(
+      name: (trimmedName != null && trimmedName.isNotEmpty)
+          ? trimmedName
+          : current.name,
+      room: room ?? current.room,
+    );
+    notifyListeners();
+  }
+
+  /// Tạo mã chuyển nhượng thiết bị (POST /devices/:id/transfer)
+  Future<Map<String, dynamic>> transferDevice(String deviceId) async {
+    final res = await _apiService.transferDevice(deviceId);
+    return res;
   }
 
   /// Xóa dữ liệu thiết bị khi đăng xuất hoặc đổi tài khoản
   void reset() {
+    _inFlightLoad = null;
     _devices = [];
     _isLoading = false;
     _errorMessage = null;
@@ -213,5 +242,6 @@ class DeviceProvider extends ChangeNotifier {
   }
 
   /// Làm mới danh sách thiết bị
-  Future<void> refreshDevices() => loadDevices();
+  Future<void> refreshDevices({bool includeCustomerUsage = true}) =>
+      loadDevices(includeCustomerUsage: includeCustomerUsage);
 }

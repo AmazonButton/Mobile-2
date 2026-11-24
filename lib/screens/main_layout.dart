@@ -73,12 +73,20 @@ class _MainLayoutState extends State<MainLayout> {
   @override
   Widget build(BuildContext context) {
     final userProv = context.watch<UserProvider?>();
-    final orderProv = context.watch<OrderProvider?>();
     final account = userProv?.accountId;
     final role = userProv?.role ?? 'CUSTOMER';
     final isAdmin = userProv?.isAdmin ?? false;
     final isSystemStaff = userProv?.isSystemStaff ?? false;
     final isStoreOwner = userProv?.isStoreOwner ?? false;
+    final pendingStoreOrders = isStoreOwner
+        ? context.select<OrderProvider?, int>(
+            (p) =>
+                p?.orders
+                    .where((o) => o.rawStatus.toUpperCase() == 'PENDING')
+                    .length ??
+                0,
+          )
+        : 0;
 
     final roleKey = '$account:$role';
     if (_lastRoleKey != null && _lastRoleKey != roleKey && _currentIndex != 0) {
@@ -175,13 +183,6 @@ class _MainLayoutState extends State<MainLayout> {
         : isStoreOwner
         ? const Color(0xFFECFDF5)
         : const Color(0xFFE0F2FE);
-
-    final pendingStoreOrders = isStoreOwner
-        ? (orderProv?.orders
-                  .where((o) => o.rawStatus.toUpperCase() == 'PENDING')
-                  .length ??
-              0)
-        : 0;
 
     return PopScope(
       onPopInvokedWithResult: (_, _) => _tour.dismiss(),

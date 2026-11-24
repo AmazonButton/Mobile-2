@@ -192,7 +192,7 @@ class AuthApiService {
     await _client.clearTokens();
   }
 
-  /// Cấp mới Access Token khi hết hạn
+  /// Cấp mới Access Token khi hết hạn (lưu cả refreshToken xoay vòng, không xóa token khi lỗi mạng)
   Future<bool> refreshToken() async {
     final refreshToken = _client.refreshToken;
     if (refreshToken == null || refreshToken.isEmpty) return false;
@@ -202,14 +202,23 @@ class AuthApiService {
         ApiConfig.authRefresh,
         body: {'refreshToken': refreshToken},
       );
+      final data = response['data'] ?? response;
       final newAccessToken =
-          response['accessToken'] ?? response['data']?['token'];
+          response['accessToken'] ?? data['token'] ?? data['accessToken'];
+      final newRefreshToken = response['refreshToken'] ?? data['refreshToken'];
       if (newAccessToken != null) {
-        await _client.setTokens(accessToken: newAccessToken.toString());
+        await _client.setTokens(
+          accessToken: newAccessToken.toString(),
+          refreshToken: newRefreshToken?.toString(),
+        );
         return true;
       }
+    } on ApiException catch (e) {
+      if (e.statusCode == 401 || e.statusCode == 403) {
+        await _client.clearTokens();
+      }
     } catch (_) {
-      await _client.clearTokens();
+      // Keep tokens on transient network errors
     }
     return false;
   }
@@ -311,6 +320,28 @@ class AuthApiService {
         'token': token.trim(),
         'newPassword': newPassword,
       },
+    );
+  }
+
+  /// Xác minh email bằng mã xác thực 6 số / token
+  Future<Map<String, dynamic>> verifyEmail({
+    required String email,
+    required String token,
+  }) async {
+    final response = await _client.post(
+      ApiConfig.authVerifyEmail,
+      body: {'email': email.trim().toLowerCase(), 'token': token.trim()},
+    );
+    return response is Map<String, dynamic>
+        ? response
+        : <String, dynamic>{'data': response};
+  }
+
+  /// Gửi lại mã xác minh email
+  Future<void> resendVerification(String email) async {
+    await _client.post(
+      ApiConfig.authResendVerification,
+      body: {'email': email.trim().toLowerCase()},
     );
   }
 }

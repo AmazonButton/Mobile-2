@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../../../models/order_model.dart';
 import '../../../models/order_timeline_entry.dart';
@@ -40,11 +41,16 @@ class OrderServerTimeline extends StatelessWidget {
                   child: Semantics(
                     label: 'Ảnh xác nhận giao hàng',
                     image: true,
-                    child: Image.network(
-                      entry.podImageUrl!,
+                    child: CachedNetworkImage(
+                      imageUrl: entry.podImageUrl!,
                       height: 180,
+                      memCacheHeight: 400,
                       fit: BoxFit.contain,
-                      errorBuilder: (_, _, _) =>
+                      placeholder: (_, _) => const SizedBox(
+                        height: 80,
+                        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                      ),
+                      errorWidget: (_, _, _) =>
                           const Text('Không thể tải ảnh xác nhận giao hàng.'),
                     ),
                   ),

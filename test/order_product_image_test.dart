@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import '../lib/models/order_model.dart';
+import 'package:smart_order_button/models/order_model.dart';
 void main() {
   test('Reads product images safely', () {
     for (final images in [[], null, [''], [{'imageUrl': ''}]]) {

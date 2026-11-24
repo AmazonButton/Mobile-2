@@ -3,8 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/user_provider.dart';
 import '../services/api_client.dart';
+import '../services/merchant_api_service.dart';
 import '../services/stores_api_service.dart';
 import '../widgets/app_motion.dart';
 import '../widgets/sample_a.dart';
@@ -45,7 +47,9 @@ class _StoreWalletScreenState extends State<StoreWalletScreen> {
 
   Map<String, dynamic>? _wallet;
   List<Map<String, dynamic>> _transactions = [];
+  List<Map<String, dynamic>> _withdrawals = [];
   bool _loading = true;
+  bool _syncingWithdrawal = false;
   String? _error;
 
   String? _bankField(String key) {
@@ -74,6 +78,7 @@ class _StoreWalletScreenState extends State<StoreWalletScreen> {
       final results = await Future.wait([
         _storesApi.getStoreWallet(),
         _storesApi.getStoreTransactions().catchError((_) => <dynamic>[]),
+        _storesApi.getStoreWithdrawals().catchError((_) => <Map<String, dynamic>>[]),
       ]);
       if (!mounted) return;
       final wallet = results[0] is Map
@@ -83,9 +88,14 @@ class _StoreWalletScreenState extends State<StoreWalletScreen> {
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      final wdList = (results[2] as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
       setState(() {
         _wallet = wallet;
         _transactions = txList;
+        _withdrawals = wdList;
         _loading = false;
       });
     } catch (e) {
@@ -377,6 +387,52 @@ class _StoreWalletScreenState extends State<StoreWalletScreen> {
     if (saved == true) {
       _snack('Đã lưu tài khoản ngân hàng nhận tiền!');
       _load();
+    }
+  }
+
+  Future<void> _syncWithdrawal(String withdrawalId) async {
+    if (_syncingWithdrawal) return;
+    setState(() => _syncingWithdrawal = true);
+    try {
+      await _storesApi.syncWithdrawalStatus(withdrawalId);
+      _snack('Đã đồng bộ trạng thái chi trả PayOS!');
+      await _load();
+    } catch (e) {
+      _snack(e is ApiException ? e.message : 'Đồng bộ trạng thái thất bại.', error: true);
+    } finally {
+      if (mounted) setState(() => _syncingWithdrawal = false);
+    }
+  }
+
+  Future<void> _verifyStoreBankAccount() async {
+    final storeId = context.read<UserProvider?>()?.storeId ?? '';
+    final bin = _bankField('bankBin') ?? '';
+    final name = _bankField('bankName') ?? '';
+    final number = _bankField('bankAccountNumber') ?? '';
+    final holder = _bankField('bankAccountHolder') ?? '';
+    if (storeId.isEmpty || bin.isEmpty || number.isEmpty || number.contains('*')) {
+      _snack('Vui lòng cập nhật đầy đủ số tài khoản ngân hàng trước khi xác minh.', error: true);
+      await _openBankAccountSheet();
+      return;
+    }
+    try {
+      final res = await MerchantApiService().createBankVerification(
+        storeId: storeId,
+        bankBin: bin,
+        bankName: name,
+        accountNumber: number,
+        accountHolder: holder,
+      );
+      final url = (res['checkoutUrl'] ?? res['paymentUrl'] ?? '').toString().trim();
+      if (url.isNotEmpty) {
+        final uri = Uri.tryParse(url);
+        if (uri != null && await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
+      }
+      _snack('Đã khởi tạo phiên xác minh 2.000đ qua PayOS!');
+    } catch (e) {
+      _snack(e is ApiException ? e.message : 'Không khởi tạo được xác minh tài khoản.', error: true);
     }
   }
 
@@ -857,7 +913,103 @@ class _StoreWalletScreenState extends State<StoreWalletScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: _verifyStoreBankAccount,
+                    icon: const Icon(LucideIcons.badgeCheck, size: 16),
+                    label: const Text('Xác minh chính chủ TK (2.000đ)'),
+                  ),
+                ),
+
+                if (_withdrawals.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Lịch sử rút tiền',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                      Text(
+                        '${_withdrawals.length} lệnh',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  for (final w in _withdrawals) ...[
+                    Builder(
+                      builder: (_) {
+                        final wid = (w['withdrawalId'] ?? w['id'] ?? '').toString();
+                        final st = (w['status'] ?? 'PENDING').toString().toUpperCase();
+                        final amt = _numValue(w['amount']);
+                        final when = _formatDate(w['createdAt']);
+                        final isDone = st == 'COMPLETED' || st == 'PAID';
+                        final isRejected = st == 'REJECTED' || st == 'FAILED';
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _formatVnd(amt),
+                                      style: const TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w800,
+                                        color: Color(0xFF0F172A),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '$st${when.isNotEmpty ? ' · $when' : ''}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: isDone
+                                            ? const Color(0xFF059669)
+                                            : isRejected
+                                            ? const Color(0xFFDC2626)
+                                            : const Color(0xFFD97706),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (!isDone && !isRejected && wid.isNotEmpty)
+                                OutlinedButton(
+                                  onPressed: _syncingWithdrawal
+                                      ? null
+                                      : () => _syncWithdrawal(wid),
+                                  child: const Text('Đồng bộ'),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ],
+
+                const SizedBox(height: 16),
 
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,

@@ -16,13 +16,17 @@ import '../providers/notification_provider.dart';
 import '../providers/order_provider.dart';
 import '../services/services.dart';
 import 'address/address_list_screen.dart';
+import 'admin_hub_screen.dart';
 import 'login_screen.dart';
 import 'main_layout.dart';
+import 'store_operations_hub_screen.dart';
 import 'store_wallet_screen.dart';
 import 'system_staff/system_staff_returns_screen.dart';
 import 'system_staff/system_staff_warranty_screen.dart';
 import 'change_password_screen.dart';
+import 'customer_insights_screen.dart';
 import 'identity_verification_screen.dart';
+import 'verify_email_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final bool showBackButton;
@@ -529,7 +533,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                     ),
+                    rowDivider,
+                    _menuRow(
+                      icon: LucideIcons.mailCheck,
+                      title: 'Xác minh email',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) => VerifyEmailScreen(initialEmail: userEmail),
+                        ),
+                      ),
+                    ),
                     if (isCustomer) ...[
+                      rowDivider,
+                      _menuRow(
+                        icon: LucideIcons.barChart3,
+                        title: 'Thống kê & Cửa hàng của tôi',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => const CustomerInsightsScreen(),
+                          ),
+                        ),
+                      ),
                       rowDivider,
                       _menuRow(
                         key: widget.tour?.key(TourStep.addresses),
@@ -620,6 +646,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                       rowDivider,
                       _menuRow(
+                        icon: LucideIcons.layoutDashboard,
+                        iconColor: const Color(0xFF047857),
+                        title: 'Trung tâm vận hành & Báo cáo',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => const StoreOperationsHubScreen(),
+                          ),
+                        ),
+                      ),
+                      rowDivider,
+                      _menuRow(
+                        icon: LucideIcons.rotateCcw,
+                        iconColor: const Color(0xFFD97706),
+                        title: 'Tiếp nhận nút trả tại quán',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SystemStaffReturnsScreen(),
+                          ),
+                        ),
+                      ),
+                      rowDivider,
+                      _menuRow(
+                        icon: LucideIcons.shieldCheck,
+                        iconColor: const Color(0xFF0E7490),
+                        title: 'Phiếu bảo hành đại lý',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SystemStaffWarrantyScreen(),
+                          ),
+                        ),
+                      ),
+                      rowDivider,
+                      _menuRow(
                         icon: LucideIcons.receiptText,
                         iconColor: const Color(0xFFD97706),
                         title: 'Đơn hàng đại lý',
@@ -648,6 +710,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         onTap: () => MainLayout.switchToTab(context, 3),
                       ),
                     ] else if (isAdmin) ...[
+                      rowDivider,
+                      _menuRow(
+                        icon: LucideIcons.shield,
+                        iconColor: const Color(0xFF4338CA),
+                        title: 'Trung tâm quản trị sàn (RBAC, PayOS, Gói)',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => const AdminHubScreen(),
+                          ),
+                        ),
+                      ),
                       rowDivider,
                       _menuRow(
                         icon: LucideIcons.store,
@@ -714,8 +788,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ]
                                 : isAdmin
                                     ? const [
-                                        '1. Giám sát cửa hàng đối tác, kho thiết bị IoT và đơn hàng toàn hệ thống.',
-                                        '2. Các nghiệp vụ duyệt rút tiền PayOS, hoàn cọc và phân quyền RBAC được thực hiện trên cổng Web Admin.',
+                                        '1. Giám sát và phê duyệt cửa hàng đối tác, kho thiết bị IoT và đơn hàng toàn hệ thống.',
+                                        '2. Quản trị người dùng RBAC, duyệt chi rút tiền PayOS, gói thuê nút, hoàn cọc và kiểm duyệt eKYC ngay trên Trung tâm quản trị sàn.',
                                       ]
                                     : const [
                                         '1. Chọn cửa hàng và sản phẩm quen dùng hoặc ghép nối nút bấm qua Bluetooth (BLE).',

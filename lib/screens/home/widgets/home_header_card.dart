@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -46,7 +47,11 @@ class HomeHeaderCard extends StatelessWidget {
     if (userAvatar != null) {
       image = FileImage(userAvatar!);
     } else if (userAvatarUrl != null && userAvatarUrl!.trim().isNotEmpty) {
-      image = NetworkImage(userAvatarUrl!.trim());
+      image = CachedNetworkImageProvider(
+        userAvatarUrl!.trim(),
+        maxWidth: 120,
+        maxHeight: 120,
+      );
     }
 
     return Container(
